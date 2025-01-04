@@ -75,7 +75,7 @@ struct WindowControl {
 #define MAX_WINDOW 5
 
 struct Window {
-	uint8_t endX;
+	uint16_t endX;
 	struct WindowControl control;
 };
 
@@ -150,7 +150,7 @@ struct GBAVideoSoftwareRenderer {
 	int start;
 	int end;
 
-	uint8_t lastHighlightAmount;
+	uint16_t lastHighlightAmount;
 };
 
 void GBAVideoSoftwareRendererCreate(struct GBAVideoSoftwareRenderer* renderer);
