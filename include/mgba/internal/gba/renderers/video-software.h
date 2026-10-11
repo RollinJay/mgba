@@ -15,6 +15,7 @@ CXX_GUARD_START
 #include <mgba/internal/gba/io.h>
 #include <mgba/internal/gba/renderers/common.h>
 #include <mgba/internal/gba/video.h>
+#include <mgba/internal/gba/widescreen.h>
 
 struct GBAVideoSoftwareBackground {
 	unsigned index;
@@ -75,7 +76,7 @@ struct WindowControl {
 #define MAX_WINDOW 5
 
 struct Window {
-	uint16_t endX;
+	uint16_t endX; // a row index: rows can be wider than 256 pixels (widescreen)
 	struct WindowControl control;
 };
 
@@ -89,8 +90,9 @@ struct GBAVideoSoftwareRenderer {
 
 	GBARegisterDISPCNT dispcnt;
 
-	uint32_t row[GBA_VIDEO_HORIZONTAL_PIXELS];
-	uint32_t spriteLayer[GBA_VIDEO_HORIZONTAL_PIXELS];
+	// One row of the picture: x = -margins.left to 240 + margins.right - 1
+	uint32_t row[GBA_WIDESCREEN_MAX_WIDTH];
+	uint32_t spriteLayer[GBA_WIDESCREEN_MAX_WIDTH];
 	int32_t spriteCyclesRemaining;
 
 	// BLDCNT
@@ -150,10 +152,21 @@ struct GBAVideoSoftwareRenderer {
 	int start;
 	int end;
 
-	uint16_t lastHighlightAmount;
+	uint8_t lastHighlightAmount;
+
+	// Widescreen (doc/widescreen.md): margins drawn around the 240x160 picture from the same
+	// video state; rendering only. The output buffer holds top + 160 + bottom rows of width
+	// pixels, and row[], start, end and endX count from the row's left edge, x = -margins.left.
+	// New margins (nextMargins) take effect when a frame starts, so every frame has one size.
+	struct GBAWidescreen margins;
+	struct GBAWidescreen nextMargins;
+	int width;
 };
 
 void GBAVideoSoftwareRendererCreate(struct GBAVideoSoftwareRenderer* renderer);
+// Sets the widescreen margins (zero for the GBA's own 240x160 picture), from the next frame
+// or reset on. The output buffer must hold the new size by then.
+void GBAVideoSoftwareRendererSetMargins(struct GBAVideoSoftwareRenderer* renderer, const struct GBAWidescreen* margins);
 
 CXX_GUARD_START
 

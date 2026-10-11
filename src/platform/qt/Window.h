@@ -61,6 +61,10 @@ public:
 	ConfigController* config() { return m_config; }
 
 	void argumentsPassed();
+#ifdef USE_NETPLAY
+	/* Opens the netplay window when a launcher passed a match in NETPLAY_CONNECT. */
+	void netplayFromEnvironment();
+#endif
 
 	void resizeFrame(const QSize& size);
 

@@ -18,6 +18,7 @@ CXX_GUARD_START
 #include <mgba/internal/gba/audio.h>
 #include <mgba/internal/gba/sio.h>
 #include <mgba/internal/gba/timer.h>
+#include <mgba/internal/gba/widescreen.h>
 
 #define GBA_ARM7TDMI_FREQUENCY 0x1000000U
 
@@ -125,6 +126,10 @@ struct GBA {
 	bool debug;
 	char debugString[0x100];
 	GBADebugFlags debugFlags;
+
+	// the widescreen margins the picture has, which a game can read (doc/widescreen.md);
+	// set by the core from the ROM's declaration and the settings, not part of savestates
+	struct GBAWidescreen widescreen;
 };
 
 struct GBACartridge {

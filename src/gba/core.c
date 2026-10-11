@@ -26,6 +26,7 @@
 #include <mgba/internal/gba/renderers/video-software.h>
 #include <mgba/internal/gba/savedata.h>
 #include <mgba/internal/gba/serialize.h>
+#include <mgba/internal/gba/widescreen.h>
 #include <mgba-util/crc32.h>
 #ifdef USE_ELF
 #include <mgba-util/elf-read.h>
@@ -220,6 +221,12 @@ struct GBACore {
 	struct mCoreMemoryBlock memoryBlocks[12];
 	size_t nMemoryBlocks;
 	int memoryBlockType;
+	// widescreen margins that the loaded ROM declares (doc/widescreen.md), and whether the
+	// frontend can show them
+	struct GBAWidescreen widescreen;
+	bool widescreenAllowed;
+	// where the GBA's screen is in the picture: inside the margins
+	struct mCoreScreenRegion screenRegion;
 };
 
 #define _MAX(A, B) ((A > B) ? (A) : (B))
@@ -246,6 +253,54 @@ static_assert(sizeof(((struct GBACore*) 0)->memoryBlocks) >=
 	"GBACore memoryBlocks sized too small");
 #undef _MAX
 
+// Widescreen (doc/widescreen.md): the margins a ROM declares are used when the frontend
+// allows it ("gba.widescreen") and the software renderer draws. Only the picture changes.
+static bool _GBACoreUsesGLRenderer(const struct mCore* core) {
+#ifdef BUILD_GLES3
+	const struct GBACore* gbacore = (const struct GBACore*) core;
+	bool value;
+	return gbacore->glRenderer.outputTex != (unsigned) -1 && mCoreConfigGetBoolValue(&core->config, "hwaccelVideo", &value) && value;
+#else
+	UNUSED(core);
+	return false;
+#endif
+}
+
+static void _GBACoreUpdateWidescreen(struct mCore* core) {
+	struct GBACore* gbacore = (struct GBACore*) core;
+	struct GBA* gba = core->board;
+	struct GBAWidescreen active = { 0 };
+	bool enabled = false;
+	mCoreConfigGetBoolValue(&core->config, "gba.widescreen", &enabled);
+	if (enabled && gbacore->widescreenAllowed && !_GBACoreUsesGLRenderer(core)) {
+		active = gbacore->widescreen;
+	}
+	GBAVideoSoftwareRendererSetMargins(&gbacore->renderer, &active);
+	gba->widescreen = active;
+	gbacore->screenRegion = _GBAScreenRegions[0];
+	gbacore->screenRegion.x = active.left;
+	gbacore->screenRegion.y = active.top;
+}
+
+void GBACoreAllowWidescreen(struct mCore* core, bool allow) {
+	if (core->platform(core) != mPLATFORM_GBA) {
+		return;
+	}
+	struct GBACore* gbacore = (struct GBACore*) core;
+	gbacore->widescreenAllowed = allow;
+	_GBACoreUpdateWidescreen(core);
+}
+
+static void _GBACoreFindWidescreen(struct mCore* core) {
+	struct GBACore* gbacore = (struct GBACore*) core;
+	struct GBA* gba = core->board;
+	if (GBAWidescreenFind(gba->memory.rom, gba->memory.romSize, &gbacore->widescreen)) {
+		mLOG(STATUS, INFO, "ROM declares widescreen margins: %u left, %u right, %u top, %u bottom",
+		     gbacore->widescreen.left, gbacore->widescreen.right, gbacore->widescreen.top, gbacore->widescreen.bottom);
+	}
+	_GBACoreUpdateWidescreen(core);
+}
+
 static bool _GBACoreInit(struct mCore* core) {
 	struct GBACore* gbacore = (struct GBACore*) core;
 
@@ -271,6 +326,9 @@ static bool _GBACoreInit(struct mCore* core) {
 #endif
 	gbacore->nMemoryBlocks = 0;
 	gbacore->memoryBlockType = -2;
+	memset(&gbacore->widescreen, 0, sizeof(gbacore->widescreen));
+	gbacore->widescreenAllowed = false;
+	gbacore->screenRegion = _GBAScreenRegions[0];
 
 	GBACreate(gba);
 	// TODO: Restore cheats
@@ -394,6 +452,8 @@ static void _GBACoreLoadConfig(struct mCore* core, const struct mCoreConfig* con
 #endif
 	mCoreConfigCopyValue(&core->config, config, "hwaccelVideo");
 	mCoreConfigCopyValue(&core->config, config, "videoScale");
+	mCoreConfigCopyValue(&core->config, config, "gba.widescreen");
+	_GBACoreUpdateWidescreen(core);
 }
 
 static void _GBACoreReloadConfigOption(struct mCore* core, const char* option, const struct mCoreConfig* config) {
@@ -443,6 +503,14 @@ static void _GBACoreReloadConfigOption(struct mCore* core, const char* option, c
 		return;
 	}
 
+	if (strcmp("gba.widescreen", option) == 0) {
+		if (config != &core->config) {
+			mCoreConfigCopyValue(&core->config, config, "gba.widescreen");
+		}
+		_GBACoreUpdateWidescreen(core);
+		return;
+	}
+
 	struct GBACore* gbacore = (struct GBACore*) core;
 #ifdef BUILD_GLES3
 	if (strcmp("videoScale", option) == 0) {
@@ -481,6 +549,7 @@ static void _GBACoreReloadConfigOption(struct mCore* core, const char* option, c
 		if (renderer) {
 			GBAVideoAssociateRenderer(&gba->video, renderer);
 		}
+		_GBACoreUpdateWidescreen(core);
 	}
 
 #ifndef MINIMAL_CORE
@@ -499,9 +568,11 @@ static void _GBACoreSetOverride(struct mCore* core, const void* override) {
 }
 
 static void _GBACoreBaseVideoSize(const struct mCore* core, unsigned* width, unsigned* height) {
-	UNUSED(core);
-	*width = GBA_VIDEO_HORIZONTAL_PIXELS;
-	*height = GBA_VIDEO_VERTICAL_PIXELS;
+	// with widescreen margins, the picture is larger (doc/widescreen.md)
+	const struct GBA* gba = core->board;
+	const struct GBAWidescreen* margins = &gba->widescreen;
+	*width = margins->left + GBA_VIDEO_HORIZONTAL_PIXELS + margins->right;
+	*height = margins->top + GBA_VIDEO_VERTICAL_PIXELS + margins->bottom;
 }
 
 static void _GBACoreCurrentVideoSize(const struct mCore* core, unsigned* width, unsigned* height) {
@@ -515,8 +586,9 @@ static void _GBACoreCurrentVideoSize(const struct mCore* core, unsigned* width, 
 	UNUSED(core);
 #endif
 
-	*width = GBA_VIDEO_HORIZONTAL_PIXELS * scale;
-	*height = GBA_VIDEO_VERTICAL_PIXELS * scale;
+	const struct GBAWidescreen* margins = &((const struct GBA*) core->board)->widescreen;
+	*width = (margins->left + GBA_VIDEO_HORIZONTAL_PIXELS + margins->right) * scale;
+	*height = (margins->top + GBA_VIDEO_VERTICAL_PIXELS + margins->bottom) * scale;
 }
 
 static unsigned _GBACoreVideoScale(const struct mCore* core) {
@@ -532,8 +604,7 @@ static unsigned _GBACoreVideoScale(const struct mCore* core) {
 }
 
 static size_t _GBACoreScreenRegions(const struct mCore* core, const struct mCoreScreenRegion** regions) {
-	UNUSED(core);
-	*regions = _GBAScreenRegions;
+	*regions = &((const struct GBACore*) core)->screenRegion;
 	return 1;
 }
 
@@ -549,6 +620,7 @@ static void _GBACoreSetVideoGLTex(struct mCore* core, unsigned texid) {
 	struct GBACore* gbacore = (struct GBACore*) core;
 	gbacore->glRenderer.outputTex = texid;
 	gbacore->glRenderer.outputTexDirty = true;
+	_GBACoreUpdateWidescreen(core);
 #else
 	UNUSED(core);
 	UNUSED(texid);
@@ -640,7 +712,11 @@ static bool _GBACoreLoadROM(struct mCore* core, struct VFile* vf) {
 		return GBALoadMB(core->board, vf);
 	}
 	gbacore->memoryBlockType = -2;
-	return GBALoadROM(core->board, vf);
+	if (!GBALoadROM(core->board, vf)) {
+		return false;
+	}
+	_GBACoreFindWidescreen(core);
+	return true;
 }
 
 static bool _GBACoreLoadBIOS(struct mCore* core, struct VFile* vf, int type) {
@@ -671,6 +747,8 @@ static bool _GBACoreLoadPatch(struct mCore* core, struct VFile* vf) {
 		return false;
 	}
 	GBAApplyPatch(core->board, &patch);
+	// a patch may declare widescreen; frontends allocate the picture after loading patches
+	_GBACoreFindWidescreen(core);
 	return true;
 }
 
@@ -684,6 +762,8 @@ static void _GBACoreUnloadROM(struct mCore* core) {
 		gbacore->cheatDevice = NULL;
 	}
 	GBAUnloadROM(core->board);
+	memset(&gbacore->widescreen, 0, sizeof(gbacore->widescreen));
+	_GBACoreUpdateWidescreen(core);
 }
 
 static size_t _GBACoreROMSize(const struct mCore* core) {
@@ -776,6 +856,8 @@ static void _GBACoreReset(struct mCore* core) {
 			GBAVideoAssociateRenderer(&gba->video, renderer);
 		}
 	}
+	// the renderer may have changed: widescreen needs the software renderer
+	_GBACoreUpdateWidescreen(core);
 
 	bool forceGbp = false;
 	bool vbaBugCompat = true;

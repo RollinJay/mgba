@@ -320,6 +320,29 @@ if(ENABLE_SCRIPTING)
 		scripting/AutorunScriptModel.cpp)
 endif()
 
+if(USE_NETPLAY)
+	# Rollback netplay (doc/netplay.md, doc/netplay-client.md): the online layer shared
+	# with the melonDS fork and the Nakama-Matchmaker launcher, and the netplay window
+	set(NETPLAY_ONLINE_QT ${QT})
+	add_subdirectory(${PROJECT_SOURCE_DIR}/src/third-party/netplay-online ${CMAKE_CURRENT_BINARY_DIR}/netplay-online EXCLUDE_FROM_ALL)
+	set(NETPLAY_SRC
+		netplay/NetplayRunner.cpp)
+	list(APPEND SOURCE_FILES ${NETPLAY_SRC}
+		netplay/NetplayAudio.cpp
+		netplay/NetplayView.cpp
+		netplay/NetplayWindow.cpp)
+	list(APPEND QT_LIBRARIES netplay-online-gekko ${BINARY_NAME}-netplay)
+	list(APPEND QT_DEFINES USE_NETPLAY)
+	if(BUILD_TEST)
+		add_executable(${BINARY_NAME}-netplay-online-test netplay/online-test.cpp ${NETPLAY_SRC})
+		set_target_properties(${BINARY_NAME}-netplay-online-test PROPERTIES
+			COMPILE_DEFINITIONS "${FEATURE_DEFINES};${FUNCTION_DEFINES};${OS_DEFINES};${QT_DEFINES}"
+			RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+		target_include_directories(${BINARY_NAME}-netplay-online-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/netplay)
+		target_link_libraries(${BINARY_NAME}-netplay-online-test netplay-online-gekko ${BINARY_NAME}-netplay ${BINARY_NAME} ${QT}::Core ${QT}::Network)
+	endif()
+endif()
+
 if(TARGET Qt6::Core)
 	qt_add_resources(RESOURCES resources.qrc)
 else()
@@ -503,7 +526,7 @@ if(UNIX AND NOT APPLE)
 	find_program(GIT git)
 	if(GIT AND NOT SKIP_GIT)
 		execute_process(COMMAND ${GIT} tag -l --sort=-version:refname "--format=%(refname:strip=2) %(creatordate:short)" WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" OUTPUT_VARIABLE RELEASE_TAGS OUTPUT_STRIP_TRAILING_WHITESPACE)
-		string(REPLACE "\n" ";" TAGS_LIST ${RELEASE_TAGS})
+		string(REPLACE "\n" ";" TAGS_LIST "${RELEASE_TAGS}")
 		foreach(TAG ${TAGS_LIST})
 			string(REPLACE " " ";" TAG_LIST ${TAG})
 			list(GET TAG_LIST 0 TAG_REF)

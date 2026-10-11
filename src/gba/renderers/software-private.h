@@ -34,6 +34,13 @@ void GBAVideoSoftwareRendererPostprocessSprite(struct GBAVideoSoftwareRenderer* 
 static inline unsigned _brighten(unsigned color, int y);
 static inline unsigned _darken(unsigned color, int y);
 
+// A modulo that stays positive: positions left of and above the GBA's screen (widescreen)
+// fall into mosaic blocks as positions on it do
+static inline int _floorMod(int value, int modulus) {
+	int remainder = value % modulus;
+	return remainder < 0 ? remainder + modulus : remainder;
+}
+
 // We stash the priority on the top bits so we can do a one-operator comparison
 // The lower the number, the higher the priority, and sprites take precedence over backgrounds
 // We want to do special processing if the color pixel is target 1, however
@@ -171,8 +178,8 @@ static inline void _compositeNoBlendNoObjwin(struct GBAVideoSoftwareRenderer* re
 	}
 
 #define BACKGROUND_BITMAP_INIT                                                                                        \
-	int32_t x = background->sx + (renderer->start - 1) * background->dx;                                              \
-	int32_t y = background->sy + (renderer->start - 1) * background->dy;                                              \
+	int32_t x = background->sx + (renderer->start - renderer->margins.left - 1) * background->dx;                     \
+	int32_t y = background->sy + (renderer->start - renderer->margins.left - 1) * background->dy;                     \
 	int mosaicH = 0;                                                                                                  \
 	int mosaicWait = 0;                                                                                               \
 	int32_t localX;                                                                                                   \
@@ -180,11 +187,12 @@ static inline void _compositeNoBlendNoObjwin(struct GBAVideoSoftwareRenderer* re
 	if (background->mosaic) {                                                                                         \
 		int mosaicV = GBAMosaicControlGetBgV(renderer->mosaic) + 1;                                                   \
 		mosaicH = GBAMosaicControlGetBgH(renderer->mosaic) + 1;                                                       \
-		mosaicWait = (mosaicH - renderer->start + GBA_VIDEO_HORIZONTAL_PIXELS * mosaicH) % mosaicH;                   \
-		int32_t startX = renderer->start - (renderer->start % mosaicH);                                               \
+		int32_t screenStart = renderer->start - renderer->margins.left;                                               \
+		mosaicWait = (mosaicH - screenStart + GBA_WIDESCREEN_MAX_WIDTH * mosaicH) % mosaicH;                          \
+		int32_t startX = screenStart - _floorMod(screenStart, mosaicH);                                               \
 		--mosaicH;                                                                                                    \
-		localX = -(inY % mosaicV) * background->dmx;                                                                  \
-		localY = -(inY % mosaicV) * background->dmy;                                                                  \
+		localX = -_floorMod(inY, mosaicV) * background->dmx;                                                          \
+		localY = -_floorMod(inY, mosaicV) * background->dmy;                                                          \
 		x += localX;                                                                                                  \
 		y += localY;                                                                                                  \
 		localX += background->sx + startX * background->dx;                                                           \

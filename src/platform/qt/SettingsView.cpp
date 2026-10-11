@@ -542,6 +542,7 @@ void SettingsView::updateConfig() {
 	saveSetting("videoScale", m_ui.videoScale);
 	saveSetting("gba.forceGbp", m_ui.forceGbp);
 	saveSetting("vbaBugCompat", m_ui.vbaBugCompat);
+	saveSetting("gba.widescreen", m_ui.gbaWidescreen);
 	saveSetting("updateAutoCheck", m_ui.updateAutoCheck);
 	saveSetting("showFilenameInLibrary", m_ui.showFilenameInLibrary);
 	saveSetting("backgroundImage", m_ui.bgImage);
@@ -764,6 +765,7 @@ void SettingsView::reloadConfig() {
 	loadSetting("dynamicTitle", m_ui.dynamicTitle, true);
 	loadSetting("gba.forceGbp", m_ui.forceGbp);
 	loadSetting("vbaBugCompat", m_ui.vbaBugCompat, true);
+	loadSetting("gba.widescreen", m_ui.gbaWidescreen, true);
 	loadSetting("updateAutoCheck", m_ui.updateAutoCheck);
 	loadSetting("showFilenameInLibrary", m_ui.showFilenameInLibrary);
 	loadSetting("backgroundImage", m_ui.bgImage);
