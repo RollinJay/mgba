@@ -4,6 +4,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "scripting/ScriptingView.h"
+#include "scripting/moc_ScriptingView.cpp"
+
+#include <QStringListModel>
 
 #include "GBAApp.h"
 #include "ConfigController.h"
@@ -17,16 +20,19 @@ ScriptingView::ScriptingView(ScriptingController* controller, ConfigController* 
 	: QMainWindow(parent)
 	, m_config(config)
 	, m_controller(controller)
+	, m_history(new QStringListModel(this))
 {
 	m_ui.setupUi(this);
 
 	ScriptingTextBufferModel* bufferModel = controller->textBufferModel();
 	m_ui.prompt->setFont(GBAApp::app()->monospaceFont());
+	m_ui.prompt->setModel(m_history);
 	m_ui.log->setNewlineTerminated(true);
 	m_ui.buffers->setModel(bufferModel);
 
-	connect(m_ui.prompt, &QLineEdit::returnPressed, this, &ScriptingView::submitRepl);
-	connect(m_ui.runButton, &QAbstractButton::clicked, this, &ScriptingView::submitRepl);
+	connect(m_ui.runButton, &QAbstractButton::clicked, m_ui.prompt, &QLineEdit::returnPressed);
+	connect(m_ui.prompt, &HistoryLineEdit::linePosted, this, &ScriptingView::submitRepl);
+	connect(m_ui.prompt, &HistoryLineEdit::linePosted, m_ui.prompt, &HistoryLineEdit::appendLine);
 
 	connect(bufferModel, &QAbstractItemModel::modelAboutToBeReset, this, &ScriptingView::controllerReset);
 	connect(bufferModel, &QAbstractItemModel::rowsInserted, this, [this, bufferModel](const QModelIndex&, int row, int) {
@@ -40,6 +46,7 @@ ScriptingView::ScriptingView(ScriptingController* controller, ConfigController* 
 	connect(m_ui.buffers->selectionModel(), &QItemSelectionModel::currentChanged, this, &ScriptingView::selectBuffer);
 	connect(m_ui.load, &QAction::triggered, this, &ScriptingView::load);
 	connect(m_ui.loadMostRecent, &QAction::triggered, this, &ScriptingView::loadMostRecent);
+	connect(m_ui.editAutorunScripts, &QAction::triggered, controller, &ScriptingController::openAutorunEdit);
 	connect(m_ui.reset, &QAction::triggered, controller, &ScriptingController::reset);
 
 	m_mruFiles = m_config->getMRU(ConfigController::MRU::Script);
@@ -51,14 +58,13 @@ ScriptingView::ScriptingView(ScriptingController* controller, ConfigController* 
 	m_ui.buffers->setCurrentIndex(bufferModel->index(0, 0));
 }
 
-void ScriptingView::submitRepl() {
-	m_ui.log->echo(m_ui.prompt->text());
-	m_controller->runCode(m_ui.prompt->text());
-	m_ui.prompt->clear();
+void ScriptingView::submitRepl(const QString& text) {
+	m_ui.log->echo(text);
+	m_controller->runCode(text);
 }
 
 void ScriptingView::load() {
-	QString filename = GBAApp::app()->getOpenFileName(this, tr("Select script to load"), getFilters());
+	QString filename = GBAApp::app()->getOpenFileName(this, tr("Select script to load"), m_controller->getFilenameFilters());
 	if (!filename.isEmpty()) {
 		if (!m_controller->loadFile(filename)) {
 			return;
@@ -82,15 +88,6 @@ void ScriptingView::selectBuffer(const QModelIndex& current, const QModelIndex&)
 		// If there is no selected buffer, use the blank document.
 		m_ui.buffer->setDocument(m_blankDocument);
 	}
-}
-
-QString ScriptingView::getFilters() const {
-	QStringList filters;
-#ifdef USE_LUA
-	filters.append(tr("Lua scripts (*.lua)"));
-#endif
-	filters.append(tr("All files (*.*)"));
-	return filters.join(";;");
 }
 
 void ScriptingView::appendMRU(const QString& fname) {

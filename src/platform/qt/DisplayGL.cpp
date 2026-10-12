@@ -4,6 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "DisplayGL.h"
+#include "moc_DisplayGL.cpp"
 
 #if defined(BUILD_GL) || defined(BUILD_GLES2) || defined(BUILD_GLES3) || defined(USE_EPOXY)
 
@@ -198,7 +199,6 @@ DisplayGL::DisplayGL(const QSurfaceFormat& format, QWidget* parent)
 #ifdef USE_SHARE_WIDGET
 	bool useShareWidget = true;
 #else
-	// TODO: Does using this on Wayland help?
 	bool useShareWidget = false;
 #endif
 
@@ -225,6 +225,8 @@ DisplayGL::DisplayGL(const QSurfaceFormat& format, QWidget* parent)
 		resizePainter();
 		emit drawingStarted();
 	});
+	connect(m_painter.get(), &PainterGL::contentSizeChanged, this, &DisplayGL::setContentSize);
+	connect(m_painter.get(), &PainterGL::contentSizeChanged, this, &Display::contentSizeChanged);
 	m_drawThread.start();
 }
 
@@ -264,11 +266,7 @@ void DisplayGL::startDrawing(std::shared_ptr<CoreController> controller) {
 	showFrameCounter(isShowFrameCounter());
 	filter(isFiltered());
 
-#if (QT_VERSION >= QT_VERSION_CHECK(5, 6, 0))
 	messagePainter()->resize(size(), devicePixelRatioF());
-#else
-	messagePainter()->resize(size(), devicePixelRatio());
-#endif
 
 	CoreController::Interrupter interrupter(m_context);
 	QMetaObject::invokeMethod(m_painter.get(), "start");
@@ -280,13 +278,12 @@ void DisplayGL::startDrawing(std::shared_ptr<CoreController> controller) {
 		show();
 		m_gl->reset();
 	}
-
-	QTimer::singleShot(8, this, &DisplayGL::updateContentSize);
 }
 
 bool DisplayGL::highestCompatible(QSurfaceFormat& format) {
 #if defined(BUILD_GLES2) || defined(BUILD_GLES3) || defined(USE_EPOXY)
 	if (QOpenGLContext::openGLModuleType() == QOpenGLContext::LibGL) {
+		format.setRenderableType(QSurfaceFormat::OpenGL);
 		format.setVersion(3, 3);
 		format.setProfile(QSurfaceFormat::CoreProfile);
 		if (DisplayGL::supportsFormat(format)) {
@@ -409,14 +406,12 @@ void DisplayGL::unpauseDrawing() {
 		if (!m_gl && shouldDisableUpdates()) {
 			setUpdatesEnabled(false);
 		}
-		QMetaObject::invokeMethod(this, "updateContentSize", Qt::QueuedConnection);
 	}
 }
 
 void DisplayGL::forceDraw() {
 	if (m_hasStarted) {
 		QMetaObject::invokeMethod(m_painter.get(), "forceDraw");
-		QMetaObject::invokeMethod(this, "updateContentSize", Qt::QueuedConnection);
 	}
 }
 
@@ -487,7 +482,6 @@ void DisplayGL::setVideoScale(int scale) {
 
 void DisplayGL::setBackgroundImage(const QImage& image) {
 	QMetaObject::invokeMethod(m_painter.get(), "setBackgroundImage", Q_ARG(const QImage&, image));
-	QMetaObject::invokeMethod(this, "updateContentSize", Qt::QueuedConnection);
 }
 
 void DisplayGL::resizeEvent(QResizeEvent* event) {
@@ -508,6 +502,9 @@ bool DisplayGL::shouldDisableUpdates() {
 	if (QGuiApplication::platformName() == "xcb") {
 		return true;
 	}
+	if (QGuiApplication::platformName() == "wayland") {
+		return true;
+	}
 	return false;
 }
 
@@ -519,8 +516,8 @@ void DisplayGL::setVideoProxy(std::shared_ptr<VideoProxy> proxy) {
 	m_painter->setVideoProxy(std::move(proxy));
 }
 
-void DisplayGL::updateContentSize() {
-	QMetaObject::invokeMethod(m_painter.get(), "contentSize", Qt::BlockingQueuedConnection, Q_RETURN_ARG(QSize, m_cachedContentSize));
+void DisplayGL::setContentSize(const QSize& size) {
+	m_cachedContentSize = size;
 }
 
 int DisplayGL::framebufferHandle() {
@@ -529,6 +526,10 @@ int DisplayGL::framebufferHandle() {
 
 void DisplayGL::setMaximumSize(const QSize& size) {
 	QMetaObject::invokeMethod(m_painter.get(), "setMaximumSize", Q_ARG(const QSize&, size));
+}
+
+void DisplayGL::setMaximumScale(int scale) {
+	QMetaObject::invokeMethod(m_painter.get(), "setMaximumScale", Q_ARG(int, scale));
 }
 
 PainterGL::PainterGL(QWindow* window, mGLWidget* widget, const QSurfaceFormat& format)
@@ -581,11 +582,8 @@ void PainterGL::create() {
 	m_gl->create();
 	makeCurrent();
 
-#ifdef BUILD_GL
-	mGLContext* glBackend;
-#endif
 #if defined(BUILD_GLES2) || defined(BUILD_GLES3)
-	mGLES2Context* gl2Backend;
+	mGLES2Context* gl2Backend = nullptr;
 #endif
 
 	if (!m_widget) {
@@ -594,15 +592,15 @@ void PainterGL::create() {
 
 #if defined(BUILD_GLES2) || defined(BUILD_GLES3)
 	if (m_supportsShaders) {
-		gl2Backend = static_cast<mGLES2Context*>(malloc(sizeof(mGLES2Context)));
+		gl2Backend = static_cast<mGLES2Context*>(malloc(sizeof(*gl2Backend)));
 		mGLES2ContextCreate(gl2Backend);
 		m_backend = &gl2Backend->d;
 	}
 #endif
 
 #ifdef BUILD_GL
-	 if (!m_backend) {
-		glBackend = static_cast<mGLContext*>(malloc(sizeof(mGLContext)));
+	if (!m_backend) {
+		mGLContext* glBackend = static_cast<mGLContext*>(malloc(sizeof(*glBackend)));
 		mGLContextCreate(glBackend);
 		m_backend = &glBackend->d;
 	}
@@ -645,7 +643,7 @@ void PainterGL::create() {
 			m_finalTexIdx = 0;
 			gl2Backend->finalShader.tex = m_finalTex[m_finalTexIdx];
 		}
-		m_shader.preprocessShader = static_cast<void*>(&reinterpret_cast<mGLES2Context*>(m_backend)->initialShader);
+		m_shader.preprocessShader = static_cast<void*>(&gl2Backend->initialShader);
 	}
 #endif
 
@@ -675,6 +673,7 @@ void PainterGL::destroy() {
 
 	free(m_backend);
 	m_backend = nullptr;
+	m_cachedContentSize = QSize();
 }
 
 void PainterGL::setContext(std::shared_ptr<CoreController> context) {
@@ -703,11 +702,12 @@ void PainterGL::resizeContext() {
 		makeCurrent();
 	}
 	m_backend->setLayerDimensions(m_backend, VIDEO_LAYER_IMAGE, &dims);
+	recenterLayers();
 	if (!m_started) {
 		m_gl->doneCurrent();
 	}
-	recenterLayers();
 	m_dims = size;
+	cacheContentSize();
 }
 
 void PainterGL::setMessagePainter(MessagePainter* messagePainter) {
@@ -719,6 +719,18 @@ void PainterGL::recenterLayers() {
 		return;
 	}
 	VideoBackendRecenter(m_backend, std::max(1U, m_context->videoScale()));
+}
+
+void PainterGL::cacheContentSize() {
+	unsigned width, height;
+	VideoBackendGetFrameSize(m_backend, &width, &height);
+	QSize size{saturateCast<int>(width),
+	           saturateCast<int>(height)};
+	if (size == m_cachedContentSize) {
+		return;
+	}
+	m_cachedContentSize = size;
+	emit contentSizeChanged(size);
 }
 
 void PainterGL::resize(const QSize& size) {
@@ -735,6 +747,13 @@ void PainterGL::resize(const QSize& size) {
 
 void PainterGL::setMaximumSize(const QSize& size) {
 	m_maxSize = size;
+	m_maxScale = 0;
+	resizeContext();
+}
+
+void PainterGL::setMaximumScale(int scale) {
+	m_maxSize = {};
+	m_maxScale = scale;
 	resizeContext();
 }
 
@@ -854,6 +873,12 @@ void PainterGL::draw() {
 		swapInterval(wantSwap);
 	}
 	dequeue();
+	if (m_drawFrametimes) {
+		m_starttimes.append(m_delayTimer.elapsed());
+		if (m_starttimes.count() > MAX_FRAME_HISTORY) {
+			m_starttimes.erase(m_starttimes.begin(), m_starttimes.end() - MAX_FRAME_HISTORY);
+		}
+	}
 	bool forceRedraw = true;
 	if (!m_delayTimer.isValid()) {
 		m_delayTimer.start();
@@ -871,7 +896,13 @@ void PainterGL::draw() {
 	mCoreSyncWaitFrameEnd(sync);
 
 	if (forceRedraw) {
-		m_delayTimer.restart();
+		qint64 frametime = m_delayTimer.restart();
+		if (m_drawFrametimes) {
+			m_frametimes.append(frametime);
+			if (m_frametimes.count() > MAX_FRAME_HISTORY) {
+				m_frametimes.erase(m_frametimes.begin(), m_frametimes.end() - MAX_FRAME_HISTORY);
+			}
+		}
 		performDraw();
 		m_backend->swap(m_backend);
 	}
@@ -883,7 +914,13 @@ void PainterGL::forceDraw() {
 		if (m_delayTimer.elapsed() < 1000 / m_window->screen()->refreshRate()) {
 			return;
 		}
-		m_delayTimer.restart();
+		qint64 frametime = m_delayTimer.restart();
+		if (m_drawFrametimes) {
+			m_frametimes.append(frametime);
+			if (m_frametimes.count() > MAX_FRAME_HISTORY) {
+				m_frametimes.erase(m_frametimes.begin(), m_frametimes.end() - MAX_FRAME_HISTORY);
+			}
+		}
 	}
 	m_backend->swap(m_backend);
 }
@@ -899,9 +936,6 @@ void PainterGL::doStop() {
 	m_started = false;
 	dequeueAll(false);
 	if (m_context) {
-		if (m_videoProxy) {
-			m_videoProxy->detach(m_context.get());
-		}
 		m_context->setFramebufferHandle(-1);
 		m_context.reset();
 		if (m_videoProxy) {
@@ -930,6 +964,10 @@ void PainterGL::unpause() {
 void PainterGL::performDraw() {
 	float r = m_window->devicePixelRatio();
 	QSize maxSize = m_maxSize;
+	if (!maxSize.isValid() && m_maxScale > 0) {
+		maxSize = m_dims * m_maxScale;
+	}
+
 	if (!maxSize.isValid()) {
 		maxSize = QSize(0, 0);
 	}
@@ -937,10 +975,43 @@ void PainterGL::performDraw() {
 	if (m_buffer) {
 		m_backend->setImage(m_backend, VIDEO_LAYER_IMAGE, m_buffer);
 	}
+	cacheContentSize();
 	m_backend->drawFrame(m_backend);
 	if (m_showOSD && m_messagePainter && m_paintDev && !glContextHasBug(OpenGLBug::IG4ICD_CRASH)) {
 		m_painter.begin(m_paintDev.get());
 		m_messagePainter->paint(&m_painter);
+
+		if (m_drawFrametimes) {
+			m_painter.setPen(Qt::gray);
+			m_painter.drawLine(0, 13, MAX_FRAME_HISTORY, 13);
+			m_painter.drawLine(0, 58, MAX_FRAME_HISTORY, 58);
+
+			int i;
+			qint64 last;
+
+			i = 0;
+			last = -1;
+			m_painter.setPen(Qt::green);
+			for (qint64 time : m_frametimes) {
+				if (last >= 0) {
+					m_painter.drawLine(i, 45 - std::min(last * 2, 45LL), i + 1, 45 - std::min(time * 2, 45LL));
+					++i;
+				}
+				last = time;
+			}
+
+			i = 0;
+			last = -1;
+			m_painter.setPen(Qt::red);
+			for (qint64 time : m_starttimes) {
+				if (last >= 0) {
+					m_painter.drawLine(i, 90 - std::min(last * 2, 45LL), i + 1, 90 - std::min(time * 2, 45LL));
+					++i;
+				}
+				last = time;
+			}
+		}
+
 		m_painter.end();
 	}
 }
@@ -1055,13 +1126,6 @@ VideoShader* PainterGL::shaders() {
 	return &m_shader;
 }
 
-QSize PainterGL::contentSize() const {
-	unsigned width, height;
-	VideoBackendGetFrameSize(m_backend, &width, &height);
-	return {saturateCast<int>(width),
-	        saturateCast<int>(height)};
-}
-
 int PainterGL::glTex() {
 #if defined(BUILD_GLES2) || defined(BUILD_GLES3)
 	if (supportsShaders()) {
@@ -1100,6 +1164,7 @@ void PainterGL::setBackgroundImage(const QImage& image) {
 	} else {
 		m_background = QImage();
 	}
+	cacheContentSize();
 
 	if (!m_started) {
 		m_gl->doneCurrent();

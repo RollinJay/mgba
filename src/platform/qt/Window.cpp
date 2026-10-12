@@ -25,6 +25,7 @@
 
 #include "AboutScreen.h"
 #include "AudioProcessor.h"
+#include "AudioProcessorDummy.h"
 #include "BattleChipView.h"
 #include "CheatsView.h"
 #include "ConfigController.h"
@@ -89,6 +90,8 @@
 
 #include <mgba-util/convolve.h>
 
+#include "moc_Window.cpp"
+
 using namespace QGBA;
 
 Window::Window(CoreManager* manager, ConfigController* config, int playerId, QWidget* parent)
@@ -148,7 +151,7 @@ Window::Window(CoreManager* manager, ConfigController* config, int playerId, QWi
 		VFile* output = m_libraryView->selectedVFile();
 		if (output) {
 			QPair<QString, QString> path = m_libraryView->selectedPath();
-			setController(m_manager->loadGame(output, path.second, path.first), path.first + "/" + path.second);
+			setController(m_manager->loadGame(output, path.second, path.first));
 		}
 	});
 #endif
@@ -194,6 +197,10 @@ Window::Window(CoreManager* manager, ConfigController* config, int playerId, QWi
 	m_shortcutController->setActionMapper(&m_actions);
 	setupMenu(menuBar());
 	setupOptions();
+	setContextMenuPolicy(Qt::CustomContextMenu);
+	connect(this, &QWidget::customContextMenuRequested, [this](const QPoint& pos) {
+		m_actions.exec(mapToGlobal(pos));
+	});
 }
 
 Window::~Window() {
@@ -246,7 +253,7 @@ void Window::argumentsPassed() {
 	}
 
 	if (args->fname) {
-		setController(m_manager->loadGame(args->fname), args->fname);
+		setController(m_manager->loadGame(args->fname));
 	}
 
 	if (m_config->graphicsOpts()->fullscreen) {
@@ -254,25 +261,43 @@ void Window::argumentsPassed() {
 	}
 }
 
+QSize Window::contentSize(bool fallback) const {
+	if (m_display) {
+		return m_display->contentSize();
+	}
+	if (m_controller) {
+		return m_controller->screenDimensions();
+	}
+	if (fallback) {
+#if defined(M_CORE_GBA)
+		return QSize(GBA_VIDEO_HORIZONTAL_PIXELS, GBA_VIDEO_VERTICAL_PIXELS);
+#elif defined(M_CORE_GB)
+		return QSize(GB_VIDEO_HORIZONTAL_PIXELS, GB_VIDEO_VERTICAL_PIXELS);
+#endif
+	}
+	return QSize();
+}
+
 void Window::resizeFrame(const QSize& size) {
 	QSize newSize(size);
 	if (!m_config->getOption("lockFrameSize").toInt()) {
 		m_savedSize = size;
-	}
-	if (windowHandle()) {
-		QRect geom = windowHandle()->screen()->availableGeometry();
-		if (newSize.width() > geom.width()) {
-			newSize.setWidth(geom.width());
+		if (windowHandle()) {
+			QRect geom = windowHandle()->screen()->availableGeometry();
+			if (newSize.width() > geom.width()) {
+				newSize.setWidth(geom.width());
+			}
+			if (newSize.height() > geom.height()) {
+				newSize.setHeight(geom.height());
+			}
 		}
-		if (newSize.height() > geom.height()) {
-			newSize.setHeight(geom.height());
+		newSize += this->size();
+		newSize -= centralWidget()->size();
+		if (!isFullScreen()) {
+			resize(newSize);
 		}
 	}
-	newSize += this->size();
-	newSize -= centralWidget()->size();
-	if (!isFullScreen()) {
-		resize(newSize);
-	}
+	recalculateFrameSize(size);
 }
 
 void Window::updateMultiplayerStatus(bool canOpenAnother) {
@@ -305,6 +330,10 @@ void Window::loadConfig() {
 	updateMRU();
 
 	m_inputController.setConfiguration(m_config);
+
+	if (!m_config->getList("autorunSettings").isEmpty()) {
+		ensureScripting();
+	}
 }
 
 void Window::reloadConfig() {
@@ -347,7 +376,7 @@ QString Window::getFiltersArchive() const {
 void Window::selectROM() {
 	QString filename = GBAApp::app()->getOpenFileName(this, tr("Select ROM"), romFilters(true));
 	if (!filename.isEmpty()) {
-		setController(m_manager->loadGame(filename), filename);
+		setController(m_manager->loadGame(filename));
 	}
 }
 
@@ -356,7 +385,7 @@ void Window::bootBIOS() {
 	if (bios.isEmpty()) {
 		bios = m_config->getOption("bios");
 	}
-	setController(m_manager->loadBIOS(mPLATFORM_GBA, bios), QString());
+	setController(m_manager->loadBIOS(mPLATFORM_GBA, bios));
 }
 
 #ifdef USE_SQLITE3
@@ -370,7 +399,7 @@ void Window::selectROMInArchive() {
 		VFile* output = archiveInspector->selectedVFile();
 		QPair<QString, QString> path = archiveInspector->selectedPath();
 		if (output) {
-			setController(m_manager->loadGame(output, path.second, path.first), path.first + "/" + path.second);
+			setController(m_manager->loadGame(output, path.second, path.first));
 		}
 		archiveInspector->close();
 	});
@@ -508,6 +537,13 @@ void Window::openView(QWidget* widget) {
 	widget->show();
 }
 
+void Window::showMenu(bool show) {
+	if (auto hideMenu = m_actions.getAction("hideMenu")) {
+		hideMenu->setActive(!show);
+	}
+	menuBar()->setVisible(show);
+}
+
 void Window::loadCamImage() {
 	QString filename = GBAApp::app()->getOpenFileName(this, tr("Select image"), tr("Image file (*.png *.gif *.jpg *.jpeg);;All files (*)"));
 	if (!filename.isEmpty()) {
@@ -549,6 +585,12 @@ void Window::openSettingsWindow(SettingsView::Page page) {
 	connect(settingsWindow, &SettingsView::pathsChanged, this, &Window::reloadConfig);
 #ifdef USE_SQLITE3
 	connect(settingsWindow, &SettingsView::libraryCleared, m_libraryView, &LibraryController::clear);
+#endif
+#ifdef ENABLE_SCRIPTING
+	connect(settingsWindow, &SettingsView::openAutorunScripts, this, [this]() {
+		ensureScripting();
+		m_scripting->openAutorunEdit();
+	});
 #endif
 	connect(this, &Window::shaderSelectorAdded, settingsWindow, &SettingsView::setShaderSelector);
 	openView(settingsWindow);
@@ -639,17 +681,7 @@ void Window::consoleOpen() {
 
 #ifdef ENABLE_SCRIPTING
 void Window::scriptingOpen() {
-	if (!m_scripting) {
-		m_scripting = std::make_unique<ScriptingController>();
-		m_scripting->setInputController(&m_inputController);
-		m_shortcutController->setScriptingController(m_scripting.get());
-		if (m_controller) {
-			m_scripting->setController(m_controller);
-			m_display->installEventFilter(m_scripting.get());
-		}
-
-		m_scripting->setVideoBackend(m_display->videoBackend());
-	}
+	ensureScripting();
 	ScriptingView* view = new ScriptingView(m_scripting.get(), m_config);
 	openView(view);
 }
@@ -678,7 +710,7 @@ void Window::keyReleaseEvent(QKeyEvent* event) {
 	}
 	int key = m_inputController.mapKeyboard(event->key());
 	if (key == -1) {
-		QWidget::keyPressEvent(event);
+		QWidget::keyReleaseEvent(event);
 		return;
 	}
 	if (m_controller) {
@@ -687,28 +719,31 @@ void Window::keyReleaseEvent(QKeyEvent* event) {
 	event->accept();
 }
 
+void Window::recalculateFrameSize(const QSize& size) {
+	int factor = -1;
+	QSize baseSize(contentSize(true));
+	if (!baseSize.isEmpty() && size.width() % baseSize.width() == 0 && size.height() % baseSize.height() == 0 && size.width() / baseSize.width() == size.height() / baseSize.height()) {
+		factor = size.width() / baseSize.width();
+	}
+
+	m_savedScale = factor;
+	for (QMap<int, std::shared_ptr<Action>>::iterator iter = m_frameSizes.begin(); iter != m_frameSizes.end(); ++iter) {
+		std::shared_ptr<Action> frameSize = iter.value();
+		frameSize->setActive(iter.key() == factor);
+	}
+}
+
 void Window::resizeEvent(QResizeEvent*) {
+	m_config->setOption("fullscreen", isFullScreen());
+	if (m_config->getOption("lockFrameSize").toInt()) {
+		return;
+	}
 	QSize newSize = centralWidget()->size();
 	if (!isFullScreen()) {
 		m_config->setOption("height", newSize.height());
 		m_config->setOption("width", newSize.width());
 	}
-
-	int factor = 0;
-	QSize size(GBA_VIDEO_HORIZONTAL_PIXELS, GBA_VIDEO_VERTICAL_PIXELS);
-	if (m_controller) {
-		size = m_controller->screenDimensions();
-	}
-	if (newSize.width() % size.width() == 0 && newSize.height() % size.height() == 0 &&
-	    newSize.width() / size.width() == newSize.height() / size.height()) {
-		factor = newSize.width() / size.width();
-	}
-	m_savedScale = factor;
-	for (QMap<int, std::shared_ptr<Action>>::iterator iter = m_frameSizes.begin(); iter != m_frameSizes.end(); ++iter) {
-		iter.value()->setActive(iter.key() == factor);
-	}
-
-	m_config->setOption("fullscreen", isFullScreen());
+	recalculateFrameSize(newSize);
 }
 
 void Window::showEvent(QShowEvent* event) {
@@ -721,7 +756,7 @@ void Window::showEvent(QShowEvent* event) {
 			}
 
 			if (m_config->getOption("muteOnMinimize").toInt()) {
-				m_inactiveMute = false;
+				m_minimizedMute = false;
 				updateMute();
 			}
 		}
@@ -770,7 +805,7 @@ void Window::hideEvent(QHideEvent* event) {
 		m_controller->setPaused(true);
 	}
 	if (m_config->getOption("muteOnMinimize").toInt()) {
-		m_inactiveMute = true;
+		m_minimizedMute = true;
 		updateMute();
 	}
 }
@@ -828,8 +863,22 @@ void Window::dropEvent(QDropEvent* event) {
 		return;
 	}
 	event->accept();
-	setController(m_manager->loadGame(url.toLocalFile()), url.toLocalFile());
+	setController(m_manager->loadGame(url.toLocalFile()));
 }
+
+#ifndef Q_OS_MAC
+void Window::changeEvent(QEvent* event) {
+	if (event->type() == QEvent::WindowStateChange) {
+		if (isFullScreen()) {
+			if (m_controller && !m_controller->isPaused()) {
+				showMenu(false);
+			} else {
+				showMenu(true);
+			}
+		}
+	}
+}
+#endif
 
 void Window::enterFullScreen() {
 	if (!isVisible()) {
@@ -842,17 +891,17 @@ void Window::enterFullScreen() {
 	showFullScreen();
 #ifndef Q_OS_MAC
 	if (m_controller && !m_controller->isPaused()) {
-		menuBar()->hide();
+		showMenu(false);
 	}
 #endif
 }
 
 void Window::exitFullScreen() {
+	showMenu(true);
 	if (!isFullScreen()) {
 		return;
 	}
 	centralWidget()->unsetCursor();
-	menuBar()->show();
 	showNormal();
 }
 
@@ -871,20 +920,16 @@ void Window::gameStarted() {
 	for (auto action = m_platformActions.begin(); action != m_platformActions.end(); ++action) {
 		action.value()->setEnabled(m_controller->platform() == action.key());
 	}
-	QSize size = m_controller->screenDimensions();
 	m_config->updateOption("lockIntegerScaling");
 	m_config->updateOption("lockAspectRatio");
 	m_config->updateOption("interframeBlending");
 	m_config->updateOption("resampleVideo");
-	if (m_savedScale > 0) {
-		resizeFrame(size * m_savedScale);
-	}
 	attachWidget(m_display.get());
 	setFocus();
 
 #ifndef Q_OS_MAC
 	if (isFullScreen()) {
-		menuBar()->hide();
+		showMenu(false);
 	}
 #endif
 
@@ -953,8 +998,12 @@ void Window::gameStopped() {
 	for (auto& action : m_platformActions) {
 		action->setEnabled(true);
 	}
+	for (auto& action : m_nonMpActions) {
+		action->setEnabled(true);
+	}
 	for (auto& action : m_gameActions) {
 		action->setEnabled(false);
+		action->setActive(false);
 	}
 	setWindowFilePath(QString());
 
@@ -978,12 +1027,7 @@ void Window::gameStopped() {
 #endif
 	}
 
-	std::shared_ptr<CoreController> controller;
-	m_controller.swap(controller);
-	QTimer::singleShot(0, this, [controller]() {
-		// Destroy the controller after everything else has cleaned up
-		Q_UNUSED(controller);
-	});
+	m_cleanupController = std::move(m_controller);
 	detachWidget();
 	updateTitle();
 
@@ -994,11 +1038,12 @@ void Window::gameStopped() {
 			m_scripting->setVideoBackend(nullptr);
 		}
 #endif
-		m_display.reset();
+		m_cleanupDisplay = std::move(m_display);
 		close();
 	}
+	QTimer::singleShot(0, this, &Window::delayedCleanup);
 #ifndef Q_OS_MAC
-	menuBar()->show();
+	showMenu(true);
 #endif
 
 #ifdef USE_DISCORD_RPC
@@ -1079,6 +1124,12 @@ void Window::reloadDisplayDriver() {
 		centralWidget()->unsetCursor();
 	});
 
+	connect(m_display.get(), &QGBA::Display::contentSizeChanged, [this](const QSize& size) {
+		if (m_savedScale > 0 && !m_config->getOption("lockFrameSize").toInt()) {
+			resizeFrame(size * m_savedScale);
+		}
+	});
+
 	m_display->configure(m_config);
 #if defined(BUILD_GL) || defined(BUILD_GLES2)
 	if (m_shaderView) {
@@ -1128,7 +1179,10 @@ void Window::reloadAudioDriver() {
 	m_audioProcessor->setInput(m_controller);
 	m_audioProcessor->configure(m_config);
 	if (!m_audioProcessor->start()) {
-		LOG(QT, WARN) << "Failed to start audio processor";
+		LOG(QT, WARN) << tr("Failed to start audio processor");
+		m_audioProcessor = std::make_unique<AudioProcessorDummy>();
+		m_audioProcessor->setInput(m_controller);
+		m_audioProcessor->configure(m_config);
 	}
 }
 
@@ -1264,7 +1318,7 @@ void Window::openStateWindow(LoadSave ls) {
 	m_stateWindow->setAttribute(Qt::WA_DeleteOnClose);
 	m_stateWindow->setMode(ls);
 
-	m_stateWindow->setDimensions(m_controller->screenDimensions());
+	m_stateWindow->setDimensions(contentSize(true));
 	m_config->updateOption("lockAspectRatio");
 	m_config->updateOption("lockIntegerScaling");
 
@@ -1288,7 +1342,7 @@ void Window::openStateWindow(LoadSave ls) {
 	m_stateWindow->setBackground(pixmap);
 
 #ifndef Q_OS_MAC
-	menuBar()->show();
+	showMenu(true);
 #endif
 	attachWidget(m_stateWindow);
 }
@@ -1560,30 +1614,18 @@ void Window::setupMenu(QMenuBar* menubar) {
 			if (!lockFrameSize) {
 				showNormal();
 			}
-#if defined(M_CORE_GBA)
-			QSize minimumSize = QSize(GBA_VIDEO_HORIZONTAL_PIXELS, GBA_VIDEO_VERTICAL_PIXELS);
-#elif defined(M_CORE_GB)
-			QSize minimumSize = QSize(GB_VIDEO_HORIZONTAL_PIXELS, GB_VIDEO_VERTICAL_PIXELS);
-#endif
-			QSize size;
-			if (m_display) {
-				size = m_display->contentSize();
-			}
-			if (size.isNull()) {
-				size = minimumSize;
-			}
+			QSize size(contentSize(true));
 			size *= i;
-			m_savedScale = i;
 			m_config->setOption("scaleMultiplier", i); // TODO: Port to other
-			m_savedSize = size;
 			resizeFrame(size);
 			if (lockFrameSize) {
-				m_display->setMaximumSize(size);
+				m_display->setMaximumScale(i);
 			}
 			setSize->setActive(true);
 		}, "frame");
 		setSize->setExclusive(true);
 		if (m_savedScale == i) {
+			QSignalBlocker blocker(setSize.get());
 			setSize->setActive(true);
 		}
 		m_frameSizes[i] = setSize;
@@ -1602,9 +1644,14 @@ void Window::setupMenu(QMenuBar* menubar) {
 	lockFrameSize->connect([this](const QVariant& value) {
 		if (m_display) {
 			if (value.toBool()) {
-				m_display->setMaximumSize(m_display->size());
+				if (m_savedScale > 0) {
+					m_display->setMaximumScale(m_savedScale);
+				} else {
+					m_display->setMaximumSize(m_display->size());
+				}
 			} else {
 				m_display->setMaximumSize({});
+				resizeEvent(nullptr);
 			}
 		}
 	}, this);
@@ -1710,6 +1757,13 @@ void Window::setupMenu(QMenuBar* menubar) {
 	m_actions.addMenu(tr("Audio channels"), "audioChannels", "av");
 
 	addGameAction(tr("Adjust layer placement..."), "placementControl", openControllerTView<PlacementControl>(), "av");
+
+#ifndef Q_OS_MAC
+	m_actions.addSeparator("av");
+	m_actions.addBooleanAction(tr("Hide &menu"), "hideMenu", [this](bool hidden) {
+		showMenu(!hidden);
+	}, "av", QKeySequence("Ctrl+M"));
+#endif
 
 	m_actions.addMenu(tr("&Tools"), "tools");
 	m_actions.addAction(tr("View &logs..."), "viewLogs", static_cast<QWidget*>(m_logView), &QWidget::show, "tools");
@@ -2045,7 +2099,7 @@ void Window::updateMRU() {
 	for (const QString& file : m_mruFiles) {
 		QString displayName(QDir::toNativeSeparators(file).replace("&", "&&"));
 		m_actions.addAction(displayName, QString("mru.%1").arg(QString::number(i)), [this, file]() {
-			setController(m_manager->loadGame(file), file);
+			setController(m_manager->loadGame(file));
 		}, "mru", QString("Ctrl+%1").arg(i));
 		++i;
 	}
@@ -2055,6 +2109,27 @@ void Window::updateMRU() {
 	m_actions.addAction(tr("Clear"), "resetMru", this, &Window::clearMRU, "mru");
 
 	m_actions.rebuildMenu(menuBar(), this, *m_shortcutController);
+}
+
+void Window::ensureScripting() {
+#ifdef ENABLE_SCRIPTING
+	if (m_scripting) {
+		return;
+	}
+	m_scripting = std::make_unique<ScriptingController>(m_config);
+	m_scripting->setInputController(&m_inputController);
+	m_shortcutController->setScriptingController(m_scripting.get());
+	if (m_controller) {
+		m_scripting->setController(m_controller);
+		m_display->installEventFilter(m_scripting.get());
+	}
+
+	if (m_display) {
+		m_scripting->setVideoBackend(m_display->videoBackend());
+	}
+
+	connect(m_scripting.get(), &ScriptingController::autorunScriptsOpened, this, &Window::openView);
+#endif
 }
 
 std::shared_ptr<Action> Window::addGameAction(const QString& visibleName, const QString& name, Action::Function function, const QString& menu, const QKeySequence& shortcut) {
@@ -2123,7 +2198,7 @@ void Window::updateFrame() {
 	m_screenWidget->setPixmap(pixmap);
 }
 
-void Window::setController(CoreController* controller, const QString& fname) {
+void Window::setController(CoreController* controller) {
 	if (!controller) {
 		return;
 	}
@@ -2133,14 +2208,25 @@ void Window::setController(CoreController* controller, const QString& fname) {
 
 	if (m_controller) {
 		m_controller->stop();
-		QTimer::singleShot(0, this, [this, controller, fname]() {
-			setController(controller, fname);
+		QTimer::singleShot(0, this, [this, controller]() {
+			setController(controller);
 		});
 		return;
 	}
-	if (!fname.isEmpty()) {
-		setWindowFilePath(fname);
-		appendMRU(fname);
+
+	QString baseDirectory = controller->baseDirectory();
+	QString path = controller->path();
+	if (!path.isEmpty()) {
+		QString fname;
+		if (baseDirectory.isEmpty()) {
+			fname = path;
+		} else {
+			fname = QFileInfo(QDir(baseDirectory), path).filePath();
+		}
+		if (!fname.isEmpty()) {
+			setWindowFilePath(fname);
+			appendMRU(fname);
+		}
 	}
 
 	if (!m_display) {
@@ -2166,10 +2252,12 @@ void Window::setController(CoreController* controller, const QString& fname) {
 	connect(m_controller.get(), &CoreController::paused, this, &Window::updateFrame);
 
 #ifndef Q_OS_MAC
-	connect(m_controller.get(), &CoreController::paused, menuBar(), &QWidget::show);
+	connect(m_controller.get(), &CoreController::paused, [this]() {
+		showMenu(true);
+	});
 	connect(m_controller.get(), &CoreController::unpaused, [this]() {
 		if(isFullScreen()) {
-			menuBar()->hide();
+			showMenu(false);
 		}
 	});
 #endif
@@ -2277,7 +2365,11 @@ void Window::attachDisplay() {
 	m_display->attach(m_controller);
 	connect(m_display.get(), &QGBA::Display::drawingStarted, this, &Window::changeRenderer);
 	if (m_config->getOption("lockFrameSize").toInt()) {
-		m_display->setMaximumSize(m_savedSize);
+		if (m_savedScale > 0) {
+			m_display->setMaximumScale(m_savedScale);
+		} else {
+			m_display->setMaximumSize(m_savedSize);
+		}
 	} else {
 		m_display->setMaximumSize({});
 	}
@@ -2295,7 +2387,7 @@ void Window::updateMute() {
 		return;
 	}
 
-	bool mute = m_inactiveMute;
+	bool mute = m_inactiveMute || m_minimizedMute;
 
 	if (!mute) {
 		QString multiplayerAudio = m_config->getQtOption("multiplayerAudio").toString();
@@ -2314,6 +2406,13 @@ void Window::setLogo() {
 	m_screenWidget->setPixmap(m_logo);
 	m_screenWidget->setDimensions(m_logo.width(), m_logo.height());
 	centralWidget()->unsetCursor();
+}
+
+void Window::delayedCleanup() {
+	// Destroy the controller after everything else has cleaned up, except for the display
+	m_cleanupController.reset();
+	// The display needs to be cleaned up last so the core can clean up the OpenGL resources
+	m_cleanupDisplay.reset();
 }
 
 WindowBackground::WindowBackground(QWidget* parent)

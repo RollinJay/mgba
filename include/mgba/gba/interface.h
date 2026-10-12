@@ -87,7 +87,7 @@ enum {
 };
 
 struct GBACartridgeOverride {
-	char id[4];
+	char id[4] ATTRIBUTE_NONSTRING;
 	enum GBASavedataType savetype;
 	int hardware;
 	uint32_t idleLoop;
@@ -105,6 +105,7 @@ bool GBAIsMB(struct VFile* vf);
 bool GBAIsBIOS(struct VFile* vf);
 
 bool GBAOverrideFind(const struct Configuration*, struct GBACartridgeOverride* override);
+bool GBAOverrideFindConfig(const struct Configuration*, struct GBACartridgeOverride* override);
 void GBAOverrideSave(struct Configuration*, const struct GBACartridgeOverride* override);
 
 struct GBASIODriver {

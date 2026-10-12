@@ -20,7 +20,7 @@ extern MGBA_EXPORT const uint32_t GBASavestateVersion;
 mLOG_DECLARE_CATEGORY(GBA_STATE);
 
 /* Savestate format:
- * 0x00000 - 0x00003: Version Magic (0x01000007)
+ * 0x00000 - 0x00003: Version Magic (0x0100000B)
  * 0x00004 - 0x00007: BIOS checksum (e.g. 0xBAAE187F for official BIOS)
  * 0x00008 - 0x0000B: ROM CRC32
  * 0x0000C - 0x0000F: Master cycles
@@ -168,7 +168,9 @@ mLOG_DECLARE_CATEGORY(GBA_STATE);
  * | 0x00290: Pin state
  * | 0x00291: Write latch
  * | 0x00292: Direction state
- * | 0x00293: Reserved
+ * | 0x00293: Flags
+ *   | bit 0: RTC SIO output
+ *   | bit 1 - 7: Reserved
  * | 0x00294 - 0x002B6: RTC state (see hardware.h for format)
  * | 0x002B7 - 0x002B7: GPIO devices
  *   | bit 0: Has RTC values
@@ -185,7 +187,7 @@ mLOG_DECLARE_CATEGORY(GBA_STATE);
  *   | bit 0: Is read enabled
  *   | bit 1: Gyroscope sample is edge
  *   | bit 2: Light sample is edge
- *   | bit 3: Reserved
+ *   | bit 3: RTC SCK is edge
  *   | bits 4 - 15: Light counter
  * | 0x002C0 - 0x002C0: Light sample
  * | 0x002C1: Flags
@@ -197,7 +199,7 @@ mLOG_DECLARE_CATEGORY(GBA_STATE);
  *   | bits 5 - 7: Cartridge subtype
  *   | bits 8 - 15: Reserved
  * 0x002C4 - 0x002C7: SIO next event
- * 0x002C8 - 0x002CB: Current DMA transfer word
+ * 0x002C8 - 0x002CB: Latched DMA 0 value
  * 0x002CC - 0x002CF: Last DMA transfer PC
  * 0x002D0 - 0x002DF: Matrix memory command buffer
  * | 0x002D0 - 0x002D3: Command
@@ -256,7 +258,14 @@ mLOG_DECLARE_CATEGORY(GBA_STATE);
  * 0x00380 - 0x0038F: Audio FIFO B samples
  * 0x00390 - 0x003CF: Audio rendered samples
  * 0x003D0 - 0x003D3: Memory bus value
- * 0x003D4 - 0x003FF: Reserved (leave zero)
+ * 0x003D4 - 0x003D7: Latched DMA 1 value
+ * 0x003D8 - 0x003DB: Latched DMA 2 value
+ * 0x003DC - 0x003DF: Latched DMA 3 value
+ * 0x003E0 - 0x003E1: Latched DMA 0 count
+ * 0x003E2 - 0x003E3: Latched DMA 1 count
+ * 0x003E4 - 0x003E5: Latched DMA 2 count
+ * 0x003E6 - 0x003E7: Latched DMA 3 count
+ * 0x003E8 - 0x003FF: Reserved (leave zero)
  * 0x00400 - 0x007FF: I/O memory
  * 0x00800 - 0x00BFF: Palette
  * 0x00C00 - 0x00FFF: OAM
@@ -284,12 +293,16 @@ DECL_BITFIELD(GBASerializedHWFlags1, uint16_t);
 DECL_BIT(GBASerializedHWFlags1, ReadWrite, 0);
 DECL_BIT(GBASerializedHWFlags1, GyroEdge, 1);
 DECL_BIT(GBASerializedHWFlags1, LightEdge, 2);
+DECL_BIT(GBASerializedHWFlags1, RtcSckEdge, 3);
 DECL_BITS(GBASerializedHWFlags1, LightCounter, 4, 12);
 
 DECL_BITFIELD(GBASerializedHWFlags2, uint8_t);
 DECL_BITS(GBASerializedHWFlags2, TiltState, 0, 2);
 DECL_BITS(GBASerializedHWFlags2, GbpInputsPosted, 2, 2);
 DECL_BITS(GBASerializedHWFlags2, GbpTxPosition, 4, 4);
+
+DECL_BITFIELD(GBASerializedHWFlags3, uint8_t);
+DECL_BITS(GBASerializedHWFlags3, RtcSioOutput, 0, 1);
 
 DECL_BITFIELD(GBASerializedUnlCartFlags, uint16_t);
 DECL_BITS(GBASerializedUnlCartFlags, Type, 0, 5);
@@ -381,9 +394,9 @@ struct GBASerializedState {
 		uint8_t pinState;
 		uint8_t writeLatch;
 		uint8_t pinDirection;
-		uint8_t reserved0;
+		GBASerializedHWFlags3 flags3;
 		int32_t rtcBytesRemaining;
-		int32_t rtcTransferStep;
+		int32_t reserved0;
 		int32_t rtcBitsRead;
 		int32_t rtcBits;
 		int32_t rtcCommandActive;
@@ -467,8 +480,10 @@ struct GBASerializedState {
 	struct mStereoSample currentSamples[GBA_MAX_SAMPLES];
 
 	uint32_t bus;
+	uint32_t dmaLatch[3];
+	uint16_t dmaCountLatch[4];
 
-	uint32_t reserved[11];
+	uint32_t reserved[6];
 
 	uint16_t io[GBA_SIZE_IO >> 1];
 	uint16_t pram[GBA_SIZE_PALETTE_RAM >> 1];

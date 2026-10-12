@@ -15,7 +15,11 @@
 #include <mgba/gba/interface.h>
 
 #ifdef BUILD_SDL
+#define SDL_MAIN_HANDLED
 #include "platform/sdl/sdl-events.h"
+#if SDL_VERSION_ATLEAST(3, 0, 0)
+#include <SDL_main.h>
+#endif
 #endif
 
 #include <QLibraryInfo>
@@ -93,6 +97,9 @@ int main(int argc, char* argv[]) {
 	QApplication::setApplicationVersion(projectVersion);
 #if (QT_VERSION < QT_VERSION_CHECK(6, 0, 0))
 	QApplication::setAttribute(Qt::AA_UseHighDpiPixmaps, true);
+#endif
+#if (QT_VERSION > QT_VERSION_CHECK(5, 14, 0))
+	QApplication::setHighDpiScaleFactorRoundingPolicy(Qt::HighDpiScaleFactorRoundingPolicy::Round);
 #endif
 
 #ifdef BUILD_GLES2

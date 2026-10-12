@@ -69,6 +69,8 @@ public:
 
 	InputController* inputController() { return &m_inputController; }
 
+	QSize contentSize(bool fallback) const;
+
 signals:
 	void startDrawing();
 	void shutdown();
@@ -76,7 +78,7 @@ signals:
 	void shaderSelectorAdded(ShaderSelector*);
 
 public slots:
-	void setController(CoreController* controller, const QString& fname);
+	void setController(CoreController* controller);
 	void selectROM();
 	void bootBIOS();
 #ifdef USE_SQLITE3
@@ -109,6 +111,9 @@ public slots:
 
 	void startVideoLog();
 
+	void openView(QWidget* widget);
+	void showMenu(bool);
+
 #ifdef ENABLE_DEBUGGERS
 	void consoleOpen();
 #endif
@@ -132,6 +137,9 @@ protected:
 	virtual void focusOutEvent(QFocusEvent*) override;
 	virtual void dragEnterEvent(QDragEnterEvent*) override;
 	virtual void dropEvent(QDropEvent*) override;
+#ifndef Q_OS_MAC
+	virtual void changeEvent(QEvent*) override;
+#endif
 
 private slots:
 	void gameStarted();
@@ -158,6 +166,8 @@ private slots:
 
 	void setLogo();
 
+	void delayedCleanup();
+
 private:
 	static const int FPS_TIMER_INTERVAL = 2000;
 	static const int MUST_RESTART_TIMEOUT = 10000;
@@ -173,7 +183,8 @@ private:
 	void clearMRU();
 	void updateMRU();
 
-	void openView(QWidget* widget);
+	void ensureScripting();
+	void recalculateFrameSize(const QSize&);
 
 	template <typename T, typename... A> std::function<void()> openTView(A... arg);
 	template <typename T, typename... A> std::function<void()> openControllerTView(A... arg);
@@ -238,6 +249,7 @@ private:
 	bool m_hitUnimplementedBiosCall;
 
 	bool m_inactiveMute = false;
+	bool m_minimizedMute = false;
 	bool m_multiActive = true;
 	int m_playerId;
 
@@ -262,6 +274,9 @@ private:
 #ifdef ENABLE_SCRIPTING
 	std::unique_ptr<ScriptingController> m_scripting;
 #endif
+
+	std::unique_ptr<QGBA::Display> m_cleanupDisplay;
+	std::shared_ptr<CoreController> m_cleanupController;
 };
 
 class WindowBackground : public QWidget {

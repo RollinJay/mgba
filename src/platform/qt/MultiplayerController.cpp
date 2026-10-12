@@ -4,6 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "MultiplayerController.h"
+#include "moc_MultiplayerController.cpp"
 
 #include "CoreController.h"
 #include "LogController.h"
@@ -310,7 +311,7 @@ bool MultiplayerController::attachGame(CoreController* controller) {
 			break;
 		}
 		if (!player.saveId) {
-			LOG(QT, ERROR) << "Couldn't find available save ID";
+			LOG(QT, ERROR) << tr("Couldn't find available save ID");
 			player.saveId = 1;
 		}
 	} else if (saveId) {
