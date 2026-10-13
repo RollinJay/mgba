@@ -17,7 +17,7 @@
 	SPRITE_YBASE_ ## DEPTH(inY); \
 	unsigned tileData; \
 	for (; outX < condition; ++outX, inX += xOffset) { \
-		int localX = inX - xOffset * (outX % mosaicH); \
+		int localX = inX - xOffset * _floorMod(outX - renderer->margins.left, mosaicH); \
 		if (localX < 0) { \
 			localX = 0; \
 		} else if (localX > width - 1) {\
@@ -56,7 +56,7 @@
 		xAccum += mat.a; \
 		yAccum += mat.c; \
 		\
-		if (outX % mosaicH == 0) { \
+		if (_floorMod(outX - renderer->margins.left, mosaicH) == 0) { \
 			localX = xAccum >> 8; \
 			localY = yAccum >> 8; \
 		} \
@@ -161,9 +161,14 @@ int GBAVideoSoftwareRendererPreprocessSprite(struct GBAVideoSoftwareRenderer* re
 	if ((flags & FLAG_OBJWIN) && (renderer->currentWindow.priority < renderer->objwin.priority || renderer->d.disableOBJWIN)) {
 		return 0;
 	}
-	int32_t x = (uint32_t) GBAObjAttributesBGetX(sprite->b) << 23;
-	x >>= 23;
-	x += renderer->objOffsetX;
+	// the row index of the sprite's left edge; widescreen margins can show sprites that are
+	// off the GBA's screen
+	int totalWidth = width;
+	if (GBAObjAttributesAIsTransformed(sprite->a)) {
+		totalWidth <<= GBAObjAttributesAGetDoubleSize(sprite->a);
+	}
+	int32_t x = GBAVideoRendererSpriteX(GBAObjAttributesBGetX(sprite->b), totalWidth, &renderer->margins);
+	x += renderer->objOffsetX + renderer->margins.left;
 	uint16_t* vramBase = &renderer->d.vram[BASE_TILE >> 1];
 	unsigned align = GBAObjAttributesAIs256Color(sprite->a) && !GBARegisterDISPCNTIsObjCharacterMapping(renderer->dispcnt);
 	unsigned charBase = (GBAObjAttributesCGetTile(sprite->c) & ~align) * 0x20;
@@ -209,11 +214,15 @@ int GBAVideoSoftwareRendererPreprocessSprite(struct GBAVideoSoftwareRenderer* re
 	}
 
 	int inY = y - ((int) GBAObjAttributesAGetY(sprite->a) + renderer->objOffsetY);
+	// widescreen lines outside 0-159: the sprite's row, wrapping at 256 as Y does
+	bool verticalMargins = renderer->margins.top || renderer->margins.bottom;
+	if (verticalMargins) {
+		inY &= 0xFF;
+	}
 	int stride = GBARegisterDISPCNTIsObjCharacterMapping(renderer->dispcnt) ? (width >> !GBAObjAttributesAIs256Color(sprite->a)) : 0x80;
 
 	uint32_t current;
 	if (GBAObjAttributesAIsTransformed(sprite->a)) {
-		int totalWidth = width << GBAObjAttributesAGetDoubleSize(sprite->a);
 		int totalHeight = height << GBAObjAttributesAGetDoubleSize(sprite->a);
 		struct GBAOAMMatrix mat;
 		LOAD_16(mat.a, 0, &renderer->d.oam->mat[GBAObjAttributesBGetMatIndex(sprite->b)].a);
@@ -233,8 +242,9 @@ int GBAVideoSoftwareRendererPreprocessSprite(struct GBAVideoSoftwareRenderer* re
 		int mosaicH = 1;
 		if (GBAObjAttributesAIsMosaic(sprite->a)) {
 			mosaicH = GBAMosaicControlGetObjH(renderer->mosaic) + 1;
-			if (condition != end && condition % mosaicH) {
-				condition += mosaicH - (condition % mosaicH);
+			int misalign = _floorMod(condition - renderer->margins.left, mosaicH);
+			if (condition != end && misalign) {
+				condition += mosaicH - misalign;
 			}
 		}
 
@@ -320,11 +330,12 @@ int GBAVideoSoftwareRendererPreprocessSprite(struct GBAVideoSoftwareRenderer* re
 		int mosaicH = 1;
 		if (GBAObjAttributesAIsMosaic(sprite->a)) {
 			mosaicH = GBAMosaicControlGetObjH(renderer->mosaic) + 1;
-			if (condition % mosaicH) {
-				condition += mosaicH - (condition % mosaicH);
+			int misalign = _floorMod(condition - renderer->margins.left, mosaicH);
+			if (misalign) {
+				condition += mosaicH - misalign;
 			}
 		}
-		if ((int) GBAObjAttributesAGetY(sprite->a) + height - 256 >= 0) {
+		if (!verticalMargins && (int) GBAObjAttributesAGetY(sprite->a) + height - 256 >= 0) {
 			inY += 256;
 		}
 		if (GBAObjAttributesBIsVFlip(sprite->b)) {

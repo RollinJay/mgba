@@ -156,6 +156,10 @@ ConfigController::ConfigController(QObject* parent)
 	mCoreConfigSetDefaultIntValue(&m_config, "gb.colors", GB_COLORS_CGB);
 #endif
 	mCoreConfigSetDefaultIntValue(&m_config, "preload", true);
+#ifdef M_CORE_GBA
+	// ROM hacks that declare widescreen margins get them (doc/widescreen.md)
+	mCoreConfigSetDefaultIntValue(&m_config, "gba.widescreen", 1);
+#endif
 	mCoreConfigMap(&m_config, &m_opts);
 
 	mSubParserGraphicsInit(&m_subparsers[0], &m_graphicsOpts);

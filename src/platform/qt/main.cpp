@@ -11,6 +11,10 @@
 #include "GBAApp.h"
 #include "Window.h"
 
+#ifdef USE_NETPLAY
+#include <mgba/feature/netplay.h>
+#endif
+
 #include <mgba/core/version.h>
 #include <mgba/gba/interface.h>
 
@@ -61,9 +65,33 @@ extern "C" __declspec (dllexport) DWORD NoHotPatch = 0x1;
 
 using namespace QGBA;
 
+#ifdef USE_NETPLAY
+/* --netplay-identity profile.ini prints the profile's identity, which the Nakama-Matchmaker
+ * launcher matches players on (doc/netplay.md, Profiles) */
+static int printNetplayIdentity(const char* path) {
+	static struct mNetplayProfile profile;
+	char err[512];
+	char identity[41];
+	if (!mNetplayProfileLoad(&profile, path, err, sizeof(err)) || !mNetplayProfileIdentity(&profile, identity, err, sizeof(err))) {
+		fprintf(stderr, "%s\n", err);
+		return 1;
+	}
+	printf("%s\n", identity);
+	fflush(stdout);
+	return 0;
+}
+#endif
+
 int main(int argc, char* argv[]) {
 #ifdef Q_OS_WIN
 	AttachConsole(ATTACH_PARENT_PROCESS);
+#endif
+#ifdef USE_NETPLAY
+	for (int i = 1; i + 1 < argc; ++i) {
+		if (strcmp(argv[i], "--netplay-identity") == 0) {
+			return printNetplayIdentity(argv[i + 1]);
+		}
+	}
 #endif
 #ifdef BUILD_SDL
 #if SDL_VERSION_ATLEAST(2, 0, 0) // CPP does not shortcut function lookup
@@ -140,6 +168,9 @@ int main(int argc, char* argv[]) {
 
 	Window* w = application.newWindow();
 	w->argumentsPassed();
+#ifdef USE_NETPLAY
+	w->netplayFromEnvironment();
+#endif
 
 	application.initMultiplayer();
 

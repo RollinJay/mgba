@@ -52,6 +52,9 @@
 #include "MemorySearch.h"
 #include "MemoryView.h"
 #include "MultiplayerController.h"
+#ifdef USE_NETPLAY
+#include "netplay/NetplayWindow.h"
+#endif
 #include "OverrideView.h"
 #include "ObjView.h"
 #include "PaletteView.h"
@@ -277,6 +280,24 @@ QSize Window::contentSize(bool fallback) const {
 	}
 	return QSize();
 }
+
+#ifdef USE_NETPLAY
+void Window::netplayFromEnvironment() {
+	NetplayOnline::ConnectInfo info;
+	QString error;
+	if (!NetplayOnline::ConnectInfo::fromEnvironment(&info, &error)) {
+		if (!error.isEmpty()) {
+			LOG(QT, ERROR) << tr("Netplay launch failed: %1").arg(error);
+		}
+		return;
+	}
+	// a launcher started this mGBA for one match: only the match shows, and mGBA quits with it
+	NetplayWindow* netplay = new NetplayWindow(m_config, &m_inputController, &m_log, this);
+	hide();
+	connect(netplay, &NetplayWindow::closed, this, &QWidget::close);
+	netplay->startFromLauncher(info);
+}
+#endif
 
 void Window::resizeFrame(const QSize& size) {
 	QSize newSize(size);
@@ -1767,6 +1788,12 @@ void Window::setupMenu(QMenuBar* menubar) {
 
 	m_actions.addMenu(tr("&Tools"), "tools");
 	m_actions.addAction(tr("View &logs..."), "viewLogs", static_cast<QWidget*>(m_logView), &QWidget::show, "tools");
+#ifdef USE_NETPLAY
+	m_actions.addAction(tr("&Netplay..."), "netplay", [this]() {
+		NetplayWindow* netplay = new NetplayWindow(m_config, &m_inputController, &m_log, this);
+		netplay->show();
+	}, "tools");
+#endif
 
 	m_actions.addAction(tr("Game &overrides..."), "overrideWindow", [this]() {
 		if (!m_overrideView) {

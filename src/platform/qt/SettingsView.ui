@@ -1332,6 +1332,19 @@
          </property>
         </widget>
        </item>
+       <item row="12" column="1">
+        <widget class="QCheckBox" name="gbaWidescreen">
+         <property name="toolTip">
+          <string>ROM hacks can declare margins that are drawn around the GBA screen. Only the picture changes; the emulated GBA does not. Needs the software renderer.</string>
+         </property>
+         <property name="text">
+          <string>Enable widescreen in ROM hacks that declare it</string>
+         </property>
+         <property name="checked">
+          <bool>true</bool>
+         </property>
+        </widget>
+       </item>
       </layout>
      </widget>
      <widget class="QWidget" name="enhancements">

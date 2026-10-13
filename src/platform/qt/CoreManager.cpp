@@ -129,6 +129,10 @@ CoreController* CoreManager::loadGame(VFile* vf, const QString& path, const QStr
 
 	core->init(core);
 	mCoreInitConfig(core, nullptr);
+#ifdef M_CORE_GBA
+	// CoreController sizes the picture after loading and follows its changes (doc/widescreen.md)
+	GBACoreAllowWidescreen(core, true);
+#endif
 
 	if (m_config) {
 		mCoreLoadForeignConfig(core, m_config);

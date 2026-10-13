@@ -12,6 +12,11 @@ CXX_GUARD_START
 
 struct mCore;
 struct mCore* GBACoreCreate(void);
+/* Widescreen (doc/widescreen.md): lets a GBA core draw the margins that a ROM declares, when
+ * the "gba.widescreen" option is on. Only for a frontend that sizes the picture from
+ * currentVideoSize() after loading the ROM and follows its changes; off by default. Call it
+ * after init(). */
+void GBACoreAllowWidescreen(struct mCore* core, bool allow);
 #ifndef MINIMAL_CORE
 struct mCore* GBAVideoLogPlayerCreate(void);
 #endif

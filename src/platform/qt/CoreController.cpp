@@ -39,6 +39,14 @@
 
 using namespace QGBA;
 
+// The picture buffers hold the largest picture a core can switch to while it runs (Super
+// Game Boy borders, GBA widescreen margins: doc/widescreen.md), so that a change of size,
+// which takes effect in the core before the buffers are told the new stride, never writes
+// past their end.
+static int videoBufferBytes(const QSize& size) {
+	return qMax(size.width() * size.height(), 512 * 256) * static_cast<int>(sizeof(mColor));
+}
+
 CoreController::CoreController(mCore* core, QObject* parent)
 	: QObject(parent)
 	, m_loadStateFlags(SAVESTATE_SCREENSHOT | SAVESTATE_RTC)
@@ -311,14 +319,20 @@ void CoreController::loadConfig(ConfigController* config) {
 	m_preload = config->getOption("preload", true).toInt();
 
 	QSize sizeBefore = screenDimensions();
-	m_activeBuffer.resize(256 * 224 * sizeof(mColor));
+	m_activeBuffer.resize(videoBufferBytes(sizeBefore));
 	m_threadContext.core->setVideoBuffer(m_threadContext.core, reinterpret_cast<mColor*>(m_activeBuffer.data()), sizeBefore.width());
 
 	mCoreLoadForeignConfig(m_threadContext.core, config->config());
 
 	QSize sizeAfter = screenDimensions();
-	m_activeBuffer.resize(sizeAfter.width() * sizeAfter.height() * sizeof(mColor));
+	m_activeBuffer.resize(videoBufferBytes(sizeAfter));
 	m_threadContext.core->setVideoBuffer(m_threadContext.core, reinterpret_cast<mColor*>(m_activeBuffer.data()), sizeAfter.width());
+	{
+		QMutexLocker locker(&m_bufferMutex);
+		if (m_completeBuffer.size() < m_activeBuffer.size()) {
+			m_completeBuffer.resize(m_activeBuffer.size());
+		}
+	}
 
 	if (hasStarted()) {
 		updateFastForward();
@@ -473,16 +487,18 @@ std::weak_ptr<MemoryAccessLogController> CoreController::memoryAccessLogControll
 #endif
 
 void CoreController::start() {
+	// patches first: a patch can change the picture's size (a widescreen declaration)
+	if (!m_patched) {
+		mCoreAutoloadPatch(m_threadContext.core);
+	}
+
 	QSize size(screenDimensions());
-	m_activeBuffer.resize(size.width() * size.height() * sizeof(mColor));
+	m_activeBuffer.resize(videoBufferBytes(size));
 	m_activeBuffer.fill(0xFF);
 	m_completeBuffer = m_activeBuffer;
 
 	m_threadContext.core->setVideoBuffer(m_threadContext.core, reinterpret_cast<mColor*>(m_activeBuffer.data()), size.width());
 
-	if (!m_patched) {
-		mCoreAutoloadPatch(m_threadContext.core);
-	}
 	if (!mCoreThreadStart(&m_threadContext)) {
 		emit failed();
 		emit stopping();

@@ -991,7 +991,18 @@ uint16_t GBAIORead(struct GBA* gba, uint32_t address) {
 		if (gba->debug) {
 			return 0x1DEA;
 		}
-		// Fall through
+		mLOG(GBA_IO, GAME_ERROR, "Read from unused I/O register: %03X", address);
+		return GBALoadBad(gba->cpu);
+	case GBA_REG_WIDESCREEN_ID:
+		return 0x5357;
+	case GBA_REG_WIDESCREEN_LEFT:
+		return gba->widescreen.left;
+	case GBA_REG_WIDESCREEN_RIGHT:
+		return gba->widescreen.right;
+	case GBA_REG_WIDESCREEN_TOP:
+		return gba->widescreen.top;
+	case GBA_REG_WIDESCREEN_BOTTOM:
+		return gba->widescreen.bottom;
 	default:
 		mLOG(GBA_IO, GAME_ERROR, "Read from unused I/O register: %03X", address);
 		return GBALoadBad(gba->cpu);

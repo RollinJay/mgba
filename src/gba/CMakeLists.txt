@@ -33,10 +33,12 @@ set(SOURCE_FILES
 	sio.c
 	sio/gbp.c
 	timer.c
-	video.c)
+	video.c
+	widescreen.c)
 
 set(SIO_FILES
 	sio/dolphin.c
+	sio/linkmachine.c
 	sio/lockstep.c)
 
 set(EXTRA_FILES
