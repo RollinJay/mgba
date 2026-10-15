@@ -1,6 +1,6 @@
 # netplay-online: a Nakama client, direct connections between players, and the handoff
 # from the launcher to an emulator (MIT license). The canonical copy lives in
-# https://github.com/RollinJay/Nakama-Matchmaker; the mGBA and melonDS forks carry copies.
+# https://github.com/RollinJay/Nakama-Matchmaker; the mGBA fork carries a copy.
 #
 # The including project may set NETPLAY_ONLINE_QT to Qt5 or Qt6; otherwise Qt 6 is
 # preferred. The GekkoNet adapter is built when a `gekkonet` target exists.

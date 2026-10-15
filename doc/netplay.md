@@ -16,7 +16,7 @@ The netplay core consists of a deterministic machine of linked GBAs inside the e
 | `src/third-party/gekkonet/` | GekkoNet (BSD 2-Clause license) with its serialization header, zpp_bits (MIT license) |
 | `src/platform/test/netplay-main.c` | `mgba-netplay-test`, the test program |
 | `src/platform/qt/netplay/` | mGBA-qt's netplay window, the thread that runs a session for it, and `mgba-netplay-online-test`, a headless player of online matches ([netplay-client.md](netplay-client.md)) |
-| `src/third-party/netplay-online/` | netplay-online (MIT license): the Nakama client, the direct connections between players and the launcher's handoff, shared with the melonDS fork and the Nakama Matchmaker launcher |
+| `src/third-party/netplay-online/` | netplay-online (MIT license): the Nakama client, the direct connections between players and the launcher's handoff, shared with the Nakama Matchmaker launcher |
 | `tools/netplay/profiles/` | Example profiles |
 | `tools/netplay/testrom/` | `linkstress.gba`, a test program that keeps the link cable busy, with its source and build script |
 | `tools/netplay/run_test.sh` | The test suite |

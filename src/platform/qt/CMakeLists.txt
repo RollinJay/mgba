@@ -322,7 +322,7 @@ endif()
 
 if(USE_NETPLAY)
 	# Rollback netplay (doc/netplay.md, doc/netplay-client.md): the online layer shared
-	# with the melonDS fork and the Nakama-Matchmaker launcher, and the netplay window
+	# with the Nakama-Matchmaker launcher, and the netplay window
 	set(NETPLAY_ONLINE_QT ${QT})
 	add_subdirectory(${PROJECT_SOURCE_DIR}/src/third-party/netplay-online ${CMAKE_CURRENT_BINARY_DIR}/netplay-online EXCLUDE_FROM_ALL)
 	set(NETPLAY_SRC
