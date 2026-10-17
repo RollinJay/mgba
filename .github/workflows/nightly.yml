@@ -154,11 +154,14 @@ jobs:
             mingw-w64-x86_64-libelf mingw-w64-x86_64-libpng mingw-w64-x86_64-zlib mingw-w64-x86_64-sqlite3
             mingw-w64-x86_64-ntldd
       - name: Configure
+        # src/gba/sio/linkmachine.c defines a static function named _rotl64, which
+        # MinGW's stdlib.h also declares; a macro renames the fork's function (stdlib.h
+        # shields its own declaration from macros with push_macro).
         run: >
-          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED=OFF -DBUILD_STATIC=ON
-          -DUSE_FFMPEG=OFF -DUSE_NETPLAY=ON -DFORCE_QT_VERSION=6
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS=-D_rotl64=linkmachine_rotl64
+          -DBUILD_SHARED=OFF -DBUILD_STATIC=ON -DUSE_FFMPEG=OFF -DUSE_NETPLAY=ON -DFORCE_QT_VERSION=6
       - name: Build
-        run: cmake --build build
+        run: cmake --build build -- -k 0
       - name: Install and deploy the DLLs
         run: |
           set -euo pipefail
@@ -230,11 +233,16 @@ jobs:
       - name: Install dependencies
         run: brew install ninja pkgconf qt sdl3 libzip lua json-c freetype libpng
       - name: Configure
+        # mGBA's CMake sets a macOS 10.6 or 10.7 deployment target for the code outside
+        # the Qt frontend, GekkoNet included, and libc++ then refuses std::visit, which
+        # macOS has had since 10.13. The Homebrew libraries need the runner's macOS
+        # version anyway, so turn off libc++'s availability checks.
         run: >
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$(brew --prefix qt)"
+          -DCMAKE_CXX_FLAGS=-D_LIBCPP_DISABLE_AVAILABILITY
           -DBUILD_SHARED=OFF -DBUILD_STATIC=ON -DUSE_FFMPEG=OFF -DUSE_NETPLAY=ON -DFORCE_QT_VERSION=6
       - name: Build
-        run: cmake --build build
+        run: cmake --build build -- -k 0
       - name: Bundle the app
         run: |
           set -euo pipefail
