@@ -13,8 +13,6 @@ on:
   schedule:
     - cron: '23 3 * * *'
   workflow_dispatch:
-  push:
-    branches: [claude/nakama-matchmaker-dedicated-server-el209s]
 
 permissions:
   contents: read
@@ -60,15 +58,6 @@ jobs:
             [ "$tagged" = "$GITHUB_SHA" ] && echo "The nightly release is missing or has no files."
             echo "build=true" >> "$GITHUB_OUTPUT"
           fi
-      - name: TEMPORARY test of the release check
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          for repo in "$GITHUB_REPOSITORY" RollinJay/IkemenGo-Nakama; do
-            released="$(gh api "repos/$repo/releases/tags/nightly" \
-              --jq '(.draft | not) and (.assets | length > 0)' 2> /dev/null || true)"
-            echo "$repo: released=$released"
-          done
 
   linux:
     name: Linux x86_64 (AppImage)
