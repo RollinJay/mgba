@@ -153,6 +153,12 @@ jobs:
             mingw-w64-x86_64-lua mingw-w64-x86_64-json-c mingw-w64-x86_64-freetype mingw-w64-x86_64-libepoxy
             mingw-w64-x86_64-libelf mingw-w64-x86_64-libpng mingw-w64-x86_64-zlib mingw-w64-x86_64-sqlite3
             mingw-w64-x86_64-ntldd
+      - name: TEMPORARY TEST ONLY - rename two names that clash with Windows headers
+        run: |
+          sed -i 's/_rotl64/_hashRotl64/g' src/gba/sio/linkmachine.c
+          sed -i 's/\bGROUP\b/SETTINGS_GROUP/g' src/platform/qt/netplay/NetplayWindow.cpp
+          git update-index --assume-unchanged src/gba/sio/linkmachine.c src/platform/qt/netplay/NetplayWindow.cpp
+          git status --short
       - name: Configure
         # src/gba/sio/linkmachine.c defines a static function named _rotl64, which
         # MinGW's stdlib.h also declares; a macro renames the fork's function (stdlib.h
@@ -256,6 +262,26 @@ jobs:
           cp res/nointro.dat "$res/"
           # Copy Qt, its plugins and the Homebrew libraries into the bundle
           "$(brew --prefix qt)/bin/macdeployqt" dist/mGBA.app -verbose=1
+          # macdeployqt misses some libraries that other Homebrew libraries load (such
+          # as brotli for freetype); copy those too and point their users at the copies
+          fw=dist/mGBA.app/Contents/Frameworks
+          for pass in 1 2 3 4 5; do
+            changed=0
+            while IFS= read -r f; do
+              for dep in $(otool -L "$f" | awk 'NR > 1 { print $1 }' | grep -E '^(/opt/homebrew|/usr/local)/.*\.dylib$' || true); do
+                name="$(basename "$dep")"
+                if [ ! -e "$fw/$name" ]; then
+                  cp "$dep" "$fw/$name"
+                  chmod u+w "$fw/$name"
+                  install_name_tool -id "@executable_path/../Frameworks/$name" "$fw/$name"
+                fi
+                echo "$f: $dep"
+                install_name_tool -change "$dep" "@executable_path/../Frameworks/$name" "$f"
+                changed=1
+              done
+            done < <(find dist/mGBA.app -type f \( -perm +111 -o -name '*.dylib' \))
+            [ "$changed" = 0 ] && break
+          done
           codesign --force --deep --sign - dist/mGBA.app
           find dist/mGBA.app -type f | sort
       - name: Check that mGBA starts
