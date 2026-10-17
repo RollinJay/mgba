@@ -1,0 +1,328 @@
+# Nightly builds of mGBA-qt with this fork's rollback netplay (USE_NETPLAY), for
+# Linux (AppImage), Windows (zip) and macOS (zipped app), published as the rolling
+# "nightly" pre-release.
+#
+#   - The schedule runs once a night and builds only when the default branch has
+#     moved since the commit that the "nightly" tag points to.
+#   - A manual run (workflow_dispatch) always builds. It publishes only when it
+#     runs on the default branch; on any other branch it just builds.
+name: nightly
+
+on:
+  schedule:
+    - cron: '23 3 * * *'
+  workflow_dispatch:
+  push:
+    branches: [ claude/nakama-matchmaker-dedicated-server-el209s ]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly
+
+jobs:
+  check:
+    name: Check for new commits
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.check.outputs.build }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github
+      - name: Compare the nightly tag with this commit
+        id: check
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" != schedule ]; then
+            echo "A $EVENT run always builds."
+            echo "build=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # An annotated tag lists the commit it points to as refs/tags/nightly^{}.
+          tagged="$(git ls-remote --tags origin 'refs/tags/nightly*' | awk '
+            $2 == "refs/tags/nightly" { tag = $1 }
+            $2 == "refs/tags/nightly^{}" { peeled = $1 }
+            END { print (peeled != "" ? peeled : tag) }')"
+          echo "nightly tag: ${tagged:-none}; this commit: $GITHUB_SHA"
+          if [ "$tagged" = "$GITHUB_SHA" ]; then
+            echo "No new commits since the last nightly build."
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  linux:
+    name: Linux x86_64 (AppImage)
+    needs: check
+    if: needs.check.outputs.build == 'true'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake ninja-build pkg-config \
+            qt6-base-dev qt6-base-dev-tools libqt6opengl6-dev qt6-multimedia-dev \
+            qt6-tools-dev qt6-tools-dev-tools qt6-l10n-tools qt6-wayland libgl-dev \
+            libsdl2-dev libzip-dev zipcmp zipmerge ziptool libedit-dev libelf-dev libepoxy-dev \
+            libpng-dev zlib1g-dev libsqlite3-dev liblua5.4-dev libjson-c-dev libfreetype-dev \
+            libfuse2 xvfb x11-utils libgl1-mesa-dri
+      - name: Configure
+        # DATADIR relative to the program, so that the AppImage finds its shaders,
+        # scripts and game database
+        run: >
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
+          -DDATADIR=../share/mgba -DBUILD_SHARED=OFF -DBUILD_STATIC=ON -DUSE_FFMPEG=OFF
+          -DUSE_NETPLAY=ON -DFORCE_QT_VERSION=6
+      - name: Build
+        run: cmake --build build
+      - name: Install into the AppDir
+        run: |
+          DESTDIR="$PWD/AppDir" cmake --install build --component mgba
+          DESTDIR="$PWD/AppDir" cmake --install build --component mgba-qt
+          # A DATADIR of ../share/mgba lands beside usr/; move it to where mgba-qt looks
+          mv AppDir/share/mgba AppDir/usr/share/mgba
+          rmdir AppDir/share
+          find AppDir -type f | sort
+      - name: Fetch AppImage tools
+        run: |
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
+          chmod a+x linuxdeploy-*.AppImage
+      - name: Build the AppImage
+        env:
+          EXTRA_PLATFORM_PLUGINS: libqwayland-egl.so;libqwayland-generic.so
+          EXTRA_QT_PLUGINS: waylandcompositor
+          QMAKE: /usr/lib/qt6/bin/qmake
+          OUTPUT: mGBA-nightly-linux-x86_64.AppImage
+        run: |
+          ./linuxdeploy-x86_64.AppImage --appdir AppDir --plugin qt --output appimage \
+            --executable AppDir/usr/bin/mgba-qt \
+            --desktop-file AppDir/usr/share/applications/io.mgba.mGBA.desktop \
+            --icon-file AppDir/usr/share/icons/hicolor/256x256/apps/io.mgba.mGBA.png
+      - name: Check that the AppImage starts
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: 1
+          QT_DEBUG_PLUGINS: 1
+        run: |
+          set -euo pipefail
+          app="$PWD/mGBA-nightly-linux-x86_64.AppImage"
+          ls -l "$app"
+          echo "Netplay identity of linkstress-2p:"
+          "$app" --netplay-identity tools/netplay/profiles/linkstress-2p.ini
+          xvfb-run -a -s "-screen 0 1280x720x24" bash -c '
+            "$0" > app.log 2>&1 &
+            pid=$!
+            sleep 15
+            xwininfo -root -tree | grep -i "mgba" || { cat app.log; exit 1; }
+            kill -0 "$pid" || { echo "mGBA exited"; cat app.log; exit 1; }
+            kill "$pid" || true
+            grep -i "platforms" app.log | head -n 20 || true' "$app"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mgba-linux-x86_64
+          path: mGBA-nightly-linux-x86_64.AppImage
+          if-no-files-found: error
+
+  windows:
+    name: Windows x86_64 (zip)
+    needs: check
+    if: needs.check.outputs.build == 'true'
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - name: Keep line endings as committed
+        shell: pwsh
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            git zip
+            mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-qt6-base mingw-w64-x86_64-qt6-multimedia mingw-w64-x86_64-qt6-tools
+            mingw-w64-x86_64-qt6-translations mingw-w64-x86_64-sdl3 mingw-w64-x86_64-libzip
+            mingw-w64-x86_64-lua mingw-w64-x86_64-json-c mingw-w64-x86_64-freetype mingw-w64-x86_64-libepoxy
+            mingw-w64-x86_64-libelf mingw-w64-x86_64-libpng mingw-w64-x86_64-zlib mingw-w64-x86_64-sqlite3
+            mingw-w64-x86_64-ntldd
+      - name: Configure
+        run: >
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED=OFF -DBUILD_STATIC=ON
+          -DUSE_FFMPEG=OFF -DUSE_NETPLAY=ON -DFORCE_QT_VERSION=6
+      - name: Build
+        run: cmake --build build
+      - name: Install and deploy the DLLs
+        run: |
+          set -euo pipefail
+          # MSYS2 keeps Qt 6's windeployqt without a suffix in share/qt6/bin
+          command -v windeployqt >/dev/null || export PATH="$MINGW_PREFIX/share/qt6/bin:$PATH"
+          command -v windeployqt
+          out="$PWD/dist/mGBA"
+          cmake --install build --component mgba --prefix "$out"
+          cmake --install build --component mgba-qt --prefix "$out"
+          # Copy the MinGW and Qt DLLs and Qt's plugins next to the program
+          bash tools/deploy-win.sh "$out/mGBA.exe" "$out" "$PWD"
+          # Qt Multimedia's FFmpeg plugin would need all of FFmpeg's DLLs; without it,
+          # Qt uses its Windows media plugin
+          rm -f "$out"/multimedia/ffmpegmediaplugin.dll
+          # Add the DLLs that Qt's plugins need beyond those of mGBA.exe
+          find "$out" -name '*.dll' > dlls.txt
+          : > ntldd.txt
+          while read -r dll; do
+            ntldd -R "$dll" >> ntldd.txt || true
+          done < dlls.txt
+          { grep -i mingw64 ntldd.txt || true; } | cut -d'>' -f2 \
+            | sed -e 's/(0x[0-9a-f]\+)//' -e 's/^ \+//' -e 's/ \+$//' -e 's,\\,/,g' | sort -u > deps.txt
+          while read -r dep; do
+            [ -e "$out/$(basename "$dep")" ] || cp -v "$dep" "$out/"
+          done < deps.txt
+          find "$out" -type f | sort
+      - name: Check that mGBA starts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Only Windows' own folders, so that every DLL must come from the package
+          $env:PATH = 'C:\Windows\System32;C:\Windows'
+          $exe = Join-Path $PWD 'dist\mGBA\mGBA.exe'
+          # mGBA's paths use forward slashes on Windows too
+          $p = Start-Process -FilePath $exe -ArgumentList '--netplay-identity', 'tools/netplay/profiles/linkstress-2p.ini' `
+            -RedirectStandardOutput identity.txt -RedirectStandardError identity-err.txt -NoNewWindow -PassThru
+          $null = $p.Handle  # keeps the exit code readable after the process ends
+          if (-not $p.WaitForExit(60000)) { $p.Kill(); throw 'mGBA.exe did not exit (a missing DLL?)' }
+          Write-Output 'Netplay identity of linkstress-2p:'
+          Get-Content identity.txt, identity-err.txt
+          if ($p.ExitCode -ne 0) { throw "mGBA.exe --netplay-identity failed with exit code $($p.ExitCode)" }
+          $env:QT_DEBUG_PLUGINS = '1'
+          $env:QT_FORCE_STDERR_LOGGING = '1'
+          $p = Start-Process -FilePath $exe -RedirectStandardError gui-err.txt -PassThru
+          Start-Sleep -Seconds 20
+          $p.Refresh()
+          $title = $p.MainWindowTitle
+          if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
+          Get-Content gui-err.txt | Select-String -Pattern 'platforms|qwindows|cannot|failed' | Select-Object -First 20
+          Write-Output "Main window title: '$title'"
+          if ($title -notlike 'mGBA*') { throw 'mGBA did not open its main window' }
+      - name: Zip
+        run: |
+          cd dist
+          zip -r -9 ../mGBA-nightly-windows-x86_64.zip mGBA
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mgba-windows-x86_64
+          path: mGBA-nightly-windows-x86_64.zip
+          if-no-files-found: error
+
+  macos:
+    name: macOS arm64 (zipped app)
+    needs: check
+    if: needs.check.outputs.build == 'true'
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: brew install ninja pkgconf qt sdl3 libzip lua json-c freetype libpng
+      - name: Configure
+        run: >
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$(brew --prefix qt)"
+          -DBUILD_SHARED=OFF -DBUILD_STATIC=ON -DUSE_FFMPEG=OFF -DUSE_NETPLAY=ON -DFORCE_QT_VERSION=6
+      - name: Build
+        run: cmake --build build
+      - name: Bundle the app
+        run: |
+          set -euo pipefail
+          mkdir dist
+          cp -R build/qt/mGBA.app dist/
+          # The data files that "cmake --install" would add to the bundle
+          res=dist/mGBA.app/Contents/Resources
+          mkdir -p "$res/shaders"
+          cp build/qt/shaders/*.shader "$res/shaders/"
+          cp -R res/scripts "$res/"
+          cp res/nointro.dat "$res/"
+          # Copy Qt, its plugins and the Homebrew libraries into the bundle
+          "$(brew --prefix qt)/bin/macdeployqt" dist/mGBA.app -verbose=1
+          codesign --force --deep --sign - dist/mGBA.app
+          find dist/mGBA.app -type f | sort
+      - name: Check that mGBA starts
+        run: |
+          set -euo pipefail
+          app=dist/mGBA.app
+          # Every library must come from the bundle or the system, not from Homebrew
+          refs="$(find "$app" -type f \( -perm +111 -o -name '*.dylib' \) -exec otool -L {} + 2> /dev/null || true)"
+          if grep -E '^[[:space:]]+(/opt/homebrew|/usr/local)' <<< "$refs"; then
+            echo "The bundle still refers to Homebrew's libraries"
+            exit 1
+          fi
+          vtool -show-build "$app/Contents/MacOS/mGBA" | grep -E 'minos|platform' || true
+          echo "Netplay identity of linkstress-2p:"
+          "$app/Contents/MacOS/mGBA" --netplay-identity tools/netplay/profiles/linkstress-2p.ini
+          QT_DEBUG_PLUGINS=1 "$app/Contents/MacOS/mGBA" > app.log 2>&1 &
+          pid=$!
+          sleep 20
+          grep -i "cocoa" app.log | head -n 10 || true
+          kill -0 "$pid" || { cat app.log; exit 1; }
+          kill "$pid" || true
+      - name: Zip
+        run: |
+          cd dist
+          ditto -c -k --keepParent mGBA.app ../mGBA-nightly-macos-arm64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mgba-macos-arm64
+          path: mGBA-nightly-macos-arm64.zip
+          if-no-files-found: error
+
+  publish:
+    name: Publish the nightly release
+    needs: [check, linux, windows, macos]
+    # A scheduled run is always on the default branch (its event carries no
+    # repository details); other runs publish only from the default branch.
+    if: >
+      needs.check.outputs.build == 'true' &&
+      (github.event_name == 'schedule' || github.ref_name == github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: packages
+          merge-multiple: true
+      - name: Write checksums
+        working-directory: packages
+        run: |
+          sha256sum -- * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - name: Move the nightly tag to this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/nightly" > /dev/null 2>&1; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/nightly" -f sha="$GITHUB_SHA" -F force=true
+          else
+            gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref=refs/tags/nightly -f sha="$GITHUB_SHA"
+          fi
+      - name: Recreate the nightly release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Deleting the release keeps the tag, which now points to this commit
+          if gh release view nightly --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release delete nightly --repo "$GITHUB_REPOSITORY" --yes
+          fi
+          cat > notes.md <<EOF
+          Nightly build of $GITHUB_REPOSITORY at commit [${GITHUB_SHA:0:12}]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$GITHUB_SHA), $(date -u '+%Y-%m-%d %H:%M') UTC.
+
+          This is an automatic build of the default branch, not a stable release.
+          EOF
+          gh release create nightly packages/* --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --prerelease --latest=false --title "Nightly build" --notes-file notes.md
