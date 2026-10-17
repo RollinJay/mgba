@@ -172,22 +172,23 @@ jobs:
         run: |
           set -euo pipefail
           # MSYS2 keeps Qt 6's windeployqt without a suffix in share/qt6/bin
-          command -v windeployqt >/dev/null || export PATH="$MINGW_PREFIX/share/qt6/bin:$PATH"
-          command -v windeployqt
+          command -v windeployqt > /dev/null || export PATH="$MINGW_PREFIX/share/qt6/bin:$PATH"
           out="$PWD/dist/mGBA"
+          # The install runs tools/deploy-win.sh, which finds nothing to deploy here: it looks
+          # for build/qt/mGBA.exe, and it passes Qt 5's --no-svg to Qt 6's windeployqt. Its
+          # two steps, windeployqt and the MinGW DLLs, follow below.
           cmake --install build --component mgba --prefix "$out"
           cmake --install build --component mgba-qt --prefix "$out"
-          # Copy the MinGW and Qt DLLs and Qt's plugins next to the program
-          bash tools/deploy-win.sh "$out/mGBA.exe" "$out" "$PWD"
+          windeployqt --no-opengl-sw --release --dir "$out" "$out/mGBA.exe"
           # Qt Multimedia's FFmpeg plugin would need all of FFmpeg's DLLs; without it,
           # Qt uses its Windows media plugin
           rm -f "$out"/multimedia/ffmpegmediaplugin.dll
-          # Add the DLLs that Qt's plugins need beyond those of mGBA.exe
-          find "$out" -name '*.dll' > dlls.txt
+          # The MinGW DLLs that the program and Qt's plugins load
+          find "$out" -name '*.exe' -o -name '*.dll' > binaries.txt
           : > ntldd.txt
-          while read -r dll; do
-            ntldd -R "$dll" >> ntldd.txt || true
-          done < dlls.txt
+          while read -r binary; do
+            ntldd -R "$binary" >> ntldd.txt || true
+          done < binaries.txt
           { grep -i mingw64 ntldd.txt || true; } | cut -d'>' -f2 \
             | sed -e 's/(0x[0-9a-f]\+)//' -e 's/^ \+//' -e 's/ \+$//' -e 's,\\,/,g' | sort -u > deps.txt
           while read -r dep; do
@@ -268,7 +269,15 @@ jobs:
           for pass in 1 2 3 4 5; do
             changed=0
             while IFS= read -r f; do
+              # A copied library may still carry its Homebrew path as its own name
+              id="$(otool -D "$f" 2> /dev/null | sed -n 2p)"
+              case "$id" in
+                /opt/homebrew/*|/usr/local/*)
+                  install_name_tool -id "@executable_path/../Frameworks/$(basename "$id")" "$f"
+                  changed=1 ;;
+              esac
               for dep in $(otool -L "$f" | awk 'NR > 1 { print $1 }' | grep -E '^(/opt/homebrew|/usr/local)/.*\.dylib$' || true); do
+                [ "$dep" = "$id" ] && continue
                 name="$(basename "$dep")"
                 if [ ! -e "$fw/$name" ]; then
                   cp "$dep" "$fw/$name"
