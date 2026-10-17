@@ -26,7 +26,7 @@ Netplay has so far been tested on Linux, with every player on one computer. Game
 
 This fork is one of several projects that share one online service. Nakama Matchmaker holds the launcher, the setup of the server, and netplay-online, the library for Nakama and the direct connections that the launcher and this fork share (a copy is in [src/third-party/netplay-online](src/third-party/netplay-online)). One Nakama server with the server modules of the [IKEMEN GO Nakama fork](https://github.com/RollinJay/IkemenGo-Nakama) serves this fork, IKEMEN GO and the [melonDS fork](https://github.com/RollinJay/melonDS-test), whose game channels add a module of their own; Nakama Matchmaker can run such a server ([docs/hosting.md](https://github.com/RollinJay/Nakama-Matchmaker/blob/main/docs/hosting.md) in its repository).
 
-**Nightly builds.** The [nightly release](https://github.com/RollinJay/mgba/releases/tag/nightly) holds mGBA-qt with the fork's features, built from the newest commit of the `master` branch. It is rebuilt every night that brings new commits, and holds:
+**Nightly builds.** The [nightly release](https://github.com/RollinJay/mgba/releases/tag/nightly) holds mGBA-qt with the fork's features, built from the newest commit of the `master` branch. It is rebuilt at 8 PM Pacific time on each night that follows new commits, and holds:
 
 - `mGBA-nightly-linux-x86_64.AppImage`, for x86_64 Linux. It is built on Ubuntu 22.04 and needs a system at least that new.
 - `mGBA-nightly-windows-x86_64.zip`, for 64-bit Windows 10 or newer.

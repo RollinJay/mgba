@@ -2,7 +2,8 @@
 # Linux (AppImage), Windows (zip) and macOS (zipped app), published as the rolling
 # "nightly" pre-release.
 #
-#   - The schedule runs once a night and builds only when the default branch has
+#   - The schedule runs at 8 PM Pacific time (America/Los_Angeles, so it follows
+#     daylight saving time) and builds only when the default branch has
 #     moved since the commit that the "nightly" tag points to, or when the
 #     "nightly" release is missing.
 #   - A manual run (workflow_dispatch) always builds. It publishes only when it
@@ -11,7 +12,8 @@ name: nightly
 
 on:
   schedule:
-    - cron: '23 3 * * *'
+    - cron: '0 20 * * *'
+      timezone: America/Los_Angeles
   workflow_dispatch:
 
 permissions:
