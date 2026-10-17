@@ -3,7 +3,8 @@
 # "nightly" pre-release.
 #
 #   - The schedule runs once a night and builds only when the default branch has
-#     moved since the commit that the "nightly" tag points to.
+#     moved since the commit that the "nightly" tag points to, or when the
+#     "nightly" release is missing.
 #   - A manual run (workflow_dispatch) always builds. It publishes only when it
 #     runs on the default branch; on any other branch it just builds.
 name: nightly
@@ -12,6 +13,8 @@ on:
   schedule:
     - cron: '23 3 * * *'
   workflow_dispatch:
+  push:
+    branches: [claude/nakama-matchmaker-dedicated-server-el209s]
 
 permissions:
   contents: read
@@ -33,6 +36,7 @@ jobs:
         id: check
         env:
           EVENT: ${{ github.event_name }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           if [ "$EVENT" != schedule ]; then
@@ -46,12 +50,25 @@ jobs:
             $2 == "refs/tags/nightly^{}" { peeled = $1 }
             END { print (peeled != "" ? peeled : tag) }')"
           echo "nightly tag: ${tagged:-none}; this commit: $GITHUB_SHA"
-          if [ "$tagged" = "$GITHUB_SHA" ]; then
+          # A publish that failed after moving the tag leaves no release, or a draft
+          released="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/nightly" \
+            --jq '(.draft | not) and (.assets | length > 0)' 2> /dev/null || true)"
+          if [ "$tagged" = "$GITHUB_SHA" ] && [ "$released" = true ]; then
             echo "No new commits since the last nightly build."
             echo "build=false" >> "$GITHUB_OUTPUT"
           else
+            [ "$tagged" = "$GITHUB_SHA" ] && echo "The nightly release is missing or has no files."
             echo "build=true" >> "$GITHUB_OUTPUT"
           fi
+      - name: TEMPORARY test of the release check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for repo in "$GITHUB_REPOSITORY" RollinJay/IkemenGo-Nakama; do
+            released="$(gh api "repos/$repo/releases/tags/nightly" \
+              --jq '(.draft | not) and (.assets | length > 0)' 2> /dev/null || true)"
+            echo "$repo: released=$released"
+          done
 
   linux:
     name: Linux x86_64 (AppImage)
@@ -120,7 +137,7 @@ jobs:
             kill -0 "$pid" || { echo "mGBA exited"; cat app.log; exit 1; }
             kill "$pid" || true
             grep -i "platforms" app.log | head -n 20 || true' "$app"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: mgba-linux-x86_64
           path: mGBA-nightly-linux-x86_64.AppImage
@@ -151,16 +168,6 @@ jobs:
             mingw-w64-x86_64-lua mingw-w64-x86_64-json-c mingw-w64-x86_64-freetype mingw-w64-x86_64-libepoxy
             mingw-w64-x86_64-libelf mingw-w64-x86_64-libpng mingw-w64-x86_64-zlib mingw-w64-x86_64-sqlite3
             mingw-w64-x86_64-ntldd
-      - name: Rename two names in the fork's code that clash with Windows headers
-        # src/gba/sio/linkmachine.c defines a function _rotl64, which MinGW's stdlib.h
-        # declares too, and src/platform/qt/netplay/NetplayWindow.cpp a constant GROUP,
-        # which winsock2.h declares as a type. Until the source renames them, this step
-        # does, in the build's copy only. Marking the two files unchanged keeps the
-        # build's version, and so its netplay identity, equal to the other platforms'.
-        run: |
-          sed -i 's/\b_rotl64\b/_linkHashRotl64/g' src/gba/sio/linkmachine.c
-          sed -i 's/\bGROUP\b/SETTINGS_GROUP/g' src/platform/qt/netplay/NetplayWindow.cpp
-          git update-index --assume-unchanged src/gba/sio/linkmachine.c src/platform/qt/netplay/NetplayWindow.cpp
       - name: Configure
         run: >
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED=OFF -DBUILD_STATIC=ON
@@ -258,7 +265,7 @@ jobs:
         run: |
           cd dist
           zip -r -9 ../mGBA-nightly-windows-x86_64.zip mGBA
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: mgba-windows-x86_64
           path: mGBA-nightly-windows-x86_64.zip
@@ -300,7 +307,7 @@ jobs:
           # macdeployqt misses some libraries that other Homebrew libraries load (such
           # as brotli for freetype); copy those too and point their users at the copies
           fw=dist/mGBA.app/Contents/Frameworks
-          for pass in 1 2 3 4 5; do
+          for _ in 1 2 3 4 5; do
             changed=0
             while IFS= read -r f; do
               # A copied library may still carry its Homebrew path as its own name
@@ -352,7 +359,7 @@ jobs:
         run: |
           cd dist
           ditto -c -k --keepParent mGBA.app ../mGBA-nightly-macos-arm64.zip
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: mgba-macos-arm64
           path: mGBA-nightly-macos-arm64.zip
@@ -370,7 +377,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: packages
           merge-multiple: true
