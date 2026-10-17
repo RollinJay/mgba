@@ -11,7 +11,7 @@ Up-to-date news and downloads can be found at [mgba.io](https://mgba.io/).
 About this fork
 ---------------
 
-This repository is a fork of mGBA. It adds online play with rollback netcode for Game Boy Advance games, including linked GBAs, and widescreen for ROM hacks that ask for it. Everything else comes from upstream mGBA ([mgba-emu/mgba](https://github.com/mgba-emu/mgba)), merged into this fork, and the rest of this README is upstream's.
+This repository is a fork of mGBA. It adds online play for Game Boy Advance games, including games played on several GBAs joined by a link cable, and widescreen for ROM hacks that ask for it. Everything else comes from upstream mGBA ([mgba-emu/mgba](https://github.com/mgba-emu/mgba)), merged into this fork, and the rest of this README is upstream's.
 
 What the fork adds:
 
