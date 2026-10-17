@@ -12,8 +12,6 @@ on:
   schedule:
     - cron: '23 3 * * *'
   workflow_dispatch:
-  push:
-    branches: [ claude/nakama-matchmaker-dedicated-server-el209s ]
 
 permissions:
   contents: read
