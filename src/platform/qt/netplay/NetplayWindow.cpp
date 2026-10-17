@@ -46,7 +46,7 @@ using namespace NetplayOnline;
 
 namespace {
 
-const char* const GROUP = "netplay";
+const char* const SETTINGS_GROUP = "netplay";
 
 const char* const STYLE =
 	"QGBA--NetplayWindow, QWidget#setup, QWidget#match { background: #1b1726; color: #e8e4f0; }"
@@ -121,31 +121,31 @@ QWidget* NetplayWindow::buildSetupPage() {
 	layout->addWidget(intro);
 
 	QFormLayout* form = new QFormLayout;
-	m_profile = new QLineEdit(m_config->getQtOption("profile", GROUP).toString());
+	m_profile = new QLineEdit(m_config->getQtOption("profile", SETTINGS_GROUP).toString());
 	QPushButton* browse = new QPushButton(tr("Browse..."));
 	connect(browse, &QPushButton::clicked, this, &NetplayWindow::browseProfile);
 	QHBoxLayout* profileRow = new QHBoxLayout;
 	profileRow->addWidget(m_profile);
 	profileRow->addWidget(browse);
 	form->addRow(tr("Profile"), profileRow);
-	m_name = new QLineEdit(m_config->getQtOption("name", GROUP).toString());
+	m_name = new QLineEdit(m_config->getQtOption("name", SETTINGS_GROUP).toString());
 	m_name->setMaxLength(16);
 	m_name->setPlaceholderText(tr("2 to 16 characters"));
 	form->addRow(tr("Name"), m_name);
-	QVariant host = m_config->getQtOption("host", GROUP);
+	QVariant host = m_config->getQtOption("host", SETTINGS_GROUP);
 	m_host = new QLineEdit(host.isNull() ? QStringLiteral("127.0.0.1") : host.toString());
 	m_port = new QSpinBox;
 	m_port->setRange(1, 65535);
-	QVariant port = m_config->getQtOption("port", GROUP);
+	QVariant port = m_config->getQtOption("port", SETTINGS_GROUP);
 	m_port->setValue(port.isNull() ? 7350 : port.toInt());
 	m_ssl = new QCheckBox(tr("TLS"));
-	m_ssl->setChecked(m_config->getQtOption("ssl", GROUP).toBool());
+	m_ssl->setChecked(m_config->getQtOption("ssl", SETTINGS_GROUP).toBool());
 	QHBoxLayout* serverRow = new QHBoxLayout;
 	serverRow->addWidget(m_host, 1);
 	serverRow->addWidget(m_port);
 	serverRow->addWidget(m_ssl);
 	form->addRow(tr("Nakama server"), serverRow);
-	QVariant key = m_config->getQtOption("key", GROUP);
+	QVariant key = m_config->getQtOption("key", SETTINGS_GROUP);
 	m_key = new QLineEdit(key.isNull() ? QStringLiteral("defaultkey") : key.toString());
 	form->addRow(tr("Server key"), m_key);
 	layout->addLayout(form);
@@ -256,16 +256,16 @@ void NetplayWindow::browseProfile() {
 }
 
 void NetplayWindow::saveSettings() {
-	m_config->setQtOption("profile", m_profile->text(), GROUP);
-	m_config->setQtOption("name", m_name->text(), GROUP);
-	m_config->setQtOption("host", m_host->text(), GROUP);
-	m_config->setQtOption("port", m_port->value(), GROUP);
-	m_config->setQtOption("key", m_key->text(), GROUP);
-	m_config->setQtOption("ssl", m_ssl->isChecked(), GROUP);
+	m_config->setQtOption("profile", m_profile->text(), SETTINGS_GROUP);
+	m_config->setQtOption("name", m_name->text(), SETTINGS_GROUP);
+	m_config->setQtOption("host", m_host->text(), SETTINGS_GROUP);
+	m_config->setQtOption("port", m_port->value(), SETTINGS_GROUP);
+	m_config->setQtOption("key", m_key->text(), SETTINGS_GROUP);
+	m_config->setQtOption("ssl", m_ssl->isChecked(), SETTINGS_GROUP);
 }
 
 QString NetplayWindow::deviceId() {
-	QString id = m_config->getQtOption("deviceId", GROUP).toString();
+	QString id = m_config->getQtOption("deviceId", SETTINGS_GROUP).toString();
 	if (id.size() < 10) {
 		std::random_device device;
 		QByteArray raw(16, Qt::Uninitialized);
@@ -273,7 +273,7 @@ QString NetplayWindow::deviceId() {
 			raw[i] = char(device() & 0xFF);
 		}
 		id = QString::fromLatin1(raw.toHex());
-		m_config->setQtOption("deviceId", id, GROUP);
+		m_config->setQtOption("deviceId", id, SETTINGS_GROUP);
 	}
 	return id;
 }
@@ -345,7 +345,7 @@ void NetplayWindow::startOnline() {
 	q.kind = QStringLiteral("mgba");
 	q.identity = m_identity;
 	q.players = m_profilePlayers;
-	q.stunServers = m_config->getQtOption("stun", GROUP).toStringList();
+	q.stunServers = m_config->getQtOption("stun", SETTINGS_GROUP).toStringList();
 	if (q.stunServers.isEmpty()) {
 		q.stunServers.append(QStringLiteral("stun.l.google.com:19302"));
 	}

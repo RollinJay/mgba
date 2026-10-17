@@ -826,13 +826,13 @@ struct GBALinkHash {
 	uint64_t total;
 };
 
-static inline uint64_t _rotl64(uint64_t x, int r) {
+static inline uint64_t _linkHashRotl64(uint64_t x, int r) {
 	return (x << r) | (x >> (64 - r));
 }
 
 static inline uint64_t _hashRound(uint64_t acc, uint64_t in) {
 	acc += in * HASH_P2;
-	acc = _rotl64(acc, 31);
+	acc = _linkHashRotl64(acc, 31);
 	return acc * HASH_P1;
 }
 
@@ -881,7 +881,7 @@ static void _hashUpdate(struct GBALinkHash* h, const void* data, size_t size) {
 }
 
 static uint32_t _hashFinish(const struct GBALinkHash* h) {
-	uint64_t r = _rotl64(h->v[0], 1) + _rotl64(h->v[1], 7) + _rotl64(h->v[2], 12) + _rotl64(h->v[3], 18);
+	uint64_t r = _linkHashRotl64(h->v[0], 1) + _linkHashRotl64(h->v[1], 7) + _linkHashRotl64(h->v[2], 12) + _linkHashRotl64(h->v[3], 18);
 	int k;
 	for (k = 0; k < 4; ++k) {
 		r ^= _hashRound(0, h->v[k]);
