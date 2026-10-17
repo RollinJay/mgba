@@ -201,13 +201,18 @@ jobs:
           # Only Windows' own folders, so that every DLL must come from the package
           $env:PATH = 'C:\Windows\System32;C:\Windows'
           $exe = Join-Path $PWD 'dist\mGBA\mGBA.exe'
+          $run = New-Object System.Diagnostics.ProcessStartInfo $exe
           # mGBA's paths use forward slashes on Windows too
-          $p = Start-Process -FilePath $exe -ArgumentList '--netplay-identity', 'tools/netplay/profiles/linkstress-2p.ini' `
-            -RedirectStandardOutput identity.txt -RedirectStandardError identity-err.txt -NoNewWindow -PassThru
-          $null = $p.Handle  # keeps the exit code readable after the process ends
+          $run.Arguments = '--netplay-identity tools/netplay/profiles/linkstress-2p.ini'
+          $run.UseShellExecute = $false
+          $run.RedirectStandardOutput = $true
+          $run.RedirectStandardError = $true
+          $p = [System.Diagnostics.Process]::Start($run)
+          $stdout = $p.StandardOutput.ReadToEndAsync()
+          $stderr = $p.StandardError.ReadToEndAsync()
           if (-not $p.WaitForExit(60000)) { $p.Kill(); throw 'mGBA.exe did not exit (a missing DLL?)' }
           Write-Output 'Netplay identity of linkstress-2p:'
-          Get-Content identity.txt, identity-err.txt
+          Write-Output $stdout.Result $stderr.Result
           if ($p.ExitCode -ne 0) { throw "mGBA.exe --netplay-identity failed with exit code $($p.ExitCode)" }
           # Every DLL of the package, Qt's plugins included, must load from the package
           Add-Type -Namespace Win32 -Name Dll -MemberDefinition @'
