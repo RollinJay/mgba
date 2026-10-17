@@ -8,6 +8,43 @@ Up-to-date news and downloads can be found at [mgba.io](https://mgba.io/).
 [![Build status](https://buildbot.mgba.io/badges/build-win32.svg)](https://buildbot.mgba.io)
 [![Translation status](https://hosted.weblate.org/widgets/mgba/-/svg-badge.svg)](https://hosted.weblate.org/engage/mgba)
 
+About this fork
+---------------
+
+This repository is a fork of mGBA. It adds online play with rollback netcode for Game Boy Advance games, including linked GBAs, and widescreen for ROM hacks that ask for it. Everything else comes from upstream mGBA ([mgba-emu/mgba](https://github.com/mgba-emu/mgba)), merged into this fork, and the rest of this README is upstream's.
+
+What the fork adds:
+
+- **Rollback netplay.** Rollback netcode lets each player's computer run the game without waiting for the other players' button presses: it predicts them, and when they arrive and differ, it loads an earlier state and runs the frames since then again. Each player's computer emulates every GBA of a match, one to four of them, together with the link cable between them, so only the players' button presses travel over the network. Games that several players play on one GBA, such as a game patched to read a second player's keys from memory, work too. The rollback library is [GekkoNet](https://github.com/HeatXD/GekkoNet).
+- **Profiles.** A *profile* is a small INI file that describes one game setup: the ROM of each GBA, whether the GBAs are linked, and which GBA each player controls. Its *identity* is a hash of the emulator build, the ROM and save files and the settings that all players must share. Players are only matched when their identities are equal, so they need the same build of this fork and the same ROM files. [tools/netplay/profiles](tools/netplay/profiles) holds examples.
+- **The netplay window.** In mGBA-qt, **Tools > Netplay...** opens a window that plays a profile with every player on one computer, runs a stress test that checks that a game stays deterministic, or finds a match online. To find a match, it signs in to a [Nakama](https://heroiclabs.com/nakama/) server, an open-source game server, and uses its matchmaker; the players' computers then connect to each other directly. Beside the game picture, panels show the players, the match's chat and the state of the connection.
+- **Matches from a launcher.** [Nakama Matchmaker](https://github.com/RollinJay/Nakama-Matchmaker) is a separate program that lists games, holds a chat room for each and finds opponents. When it pairs players for a GBA game, it starts mGBA-qt, which opens the netplay window on that match. A player in the launcher and a player in mGBA-qt's netplay window can be matched with each other.
+- **Widescreen for ROM hacks.** A ROM hack can carry a short declaration that asks for margins around the GBA's 240×160 picture. mGBA-qt then draws a larger picture, up to 512×256, from the same video state, while the emulated GBA stays as it is. A ROM without the declaration looks as it does in upstream mGBA. The setting is under **Settings > Emulation**, on by default, and needs the software renderer.
+- **The GBA's own screen and timing.** An earlier "Widescreen Test" build of this fork enlarged the emulated screen to 320×200, which changed the video timing of every game. The fork emulates the GBA's 240×160 screen and timing again, and gets widescreen only from the margins described above.
+
+Netplay has so far been tested on Linux, with every player on one computer. Game channels, challenges, spectating, replays and ranks are planned but not built, and there is no relay yet for players whose routers prevent direct connections.
+
+This fork is one of several projects that share one online service. Nakama Matchmaker holds the launcher, the setup of the server, and netplay-online, the library for Nakama and the direct connections that the launcher and this fork share (a copy is in [src/third-party/netplay-online](src/third-party/netplay-online)). One Nakama server with the server modules of the [IKEMEN GO Nakama fork](https://github.com/RollinJay/IkemenGo-Nakama) serves this fork, IKEMEN GO and the [melonDS fork](https://github.com/RollinJay/melonDS-test), whose game channels add a module of their own; Nakama Matchmaker can run such a server ([docs/hosting.md](https://github.com/RollinJay/Nakama-Matchmaker/blob/main/docs/hosting.md) in its repository).
+
+**Nightly builds.** The [nightly release](https://github.com/RollinJay/mgba/releases/tag/nightly) holds mGBA-qt with the fork's features, built from the newest commit of the `master` branch. It is rebuilt every night that brings new commits, and holds:
+
+- `mGBA-nightly-linux-x86_64.AppImage`, for x86_64 Linux. It is built on Ubuntu 22.04 and needs a system at least that new.
+- `mGBA-nightly-windows-x86_64.zip`, for 64-bit Windows 10 or newer.
+- `mGBA-nightly-macos-arm64.zip`, for Macs with Apple silicon and macOS 14 or newer.
+- `SHA256SUMS.txt`, the SHA-256 checksums of the three.
+
+These are automatic builds, not stable releases, and they leave out video and GIF recording. Netplay on Windows and macOS has not been tested yet. The macOS app is not notarized by Apple, so macOS blocks its first start until it is allowed under System Settings > Privacy & Security. mGBA's own updater (Settings > Update) would replace a nightly build with upstream mGBA, which lacks the fork's features.
+
+The details are in three documents:
+
+- [doc/netplay.md](doc/netplay.md): how the rollback netplay works, profiles, building, the test program and test results;
+- [doc/netplay-client.md](doc/netplay-client.md): the netplay window, online play, the launcher's hand-off, and what is planned;
+- [doc/widescreen.md](doc/widescreen.md): how a ROM hack declares widescreen, and what the margins show.
+
+To build the fork yourself, follow [Compiling](#compiling) below. Netplay is on by default and needs a C++20 compiler ([doc/netplay.md](doc/netplay.md#building)).
+
+The license is unchanged: mGBA, this fork included, is distributed under the Mozilla Public License 2.0 (see [Copyright](#copyright)). The fork adds GekkoNet (BSD 2-Clause license) with zpp_bits (MIT license) in [src/third-party/gekkonet](src/third-party/gekkonet), and netplay-online (MIT license) in [src/third-party/netplay-online](src/third-party/netplay-online).
+
 Features
 --------
 
