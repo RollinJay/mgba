@@ -181,10 +181,8 @@ jobs:
           cmake --install build --component mgba --prefix "$out"
           cmake --install build --component mgba-qt --prefix "$out"
           windeployqt --no-opengl-sw --release --dir "$out" "$out/mGBA.exe"
-          # Qt Multimedia's FFmpeg plugin would need all of FFmpeg's DLLs; without it,
-          # Qt uses its Windows media plugin
-          rm -f "$out"/multimedia/ffmpegmediaplugin.dll
-          # The MinGW DLLs that the program and Qt's plugins load
+          # The MinGW DLLs that the program and Qt's plugins load, among them those of
+          # FFmpeg, which MSYS2's Qt Multimedia uses as its only media backend
           find "$out" -name '*.exe' -o -name '*.dll' > binaries.txt
           : > ntldd.txt
           while read -r binary; do
@@ -211,6 +209,25 @@ jobs:
           Write-Output 'Netplay identity of linkstress-2p:'
           Get-Content identity.txt, identity-err.txt
           if ($p.ExitCode -ne 0) { throw "mGBA.exe --netplay-identity failed with exit code $($p.ExitCode)" }
+          # Every DLL of the package, Qt's plugins included, must load from the package
+          Add-Type -Namespace Win32 -Name Dll -MemberDefinition @'
+          [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+          public static extern IntPtr AddDllDirectory(string dir);
+          [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+          public static extern IntPtr LoadLibraryExW(string path, IntPtr file, uint flags);
+          '@
+          $pkg = Join-Path $PWD 'dist\mGBA'
+          $null = [Win32.Dll]::AddDllDirectory($pkg)
+          $failed = 0
+          foreach ($dll in Get-ChildItem -Path $pkg -Filter *.dll -Recurse) {
+            # LOAD_LIBRARY_SEARCH_DEFAULT_DIRS | LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR
+            if ([Win32.Dll]::LoadLibraryExW($dll.FullName, [IntPtr]::Zero, 0x1100) -eq [IntPtr]::Zero) {
+              Write-Output "Cannot load $($dll.FullName): error $([Runtime.InteropServices.Marshal]::GetLastWin32Error())"
+              $failed++
+            }
+          }
+          if ($failed) { throw "$failed DLLs do not load" }
+          Write-Output 'Every DLL of the package loads.'
           $env:QT_DEBUG_PLUGINS = '1'
           $env:QT_FORCE_STDERR_LOGGING = '1'
           $p = Start-Process -FilePath $exe -RedirectStandardError gui-err.txt -PassThru
